@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "include": [
+    "/",
+    "/buy",
+    "/rent",
+    "/commercial",
+    "/land",
+    "/listings",
+    "/agents",
+    "/verification",
+    "/advertise",
+    "/listing/*",
+    "/sitemap.xml",
+    "/robots.txt"
+  ],
+  "exclude": []
+}
