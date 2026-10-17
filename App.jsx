@@ -1491,6 +1491,12 @@ function ProfilePage({ currentUser, onUpdateUser, favorites, listings, onToggleF
         <button className="pk-btn-outline" onClick={onLogout}>
           <LogOut size={15} /> Log out
         </button>
+        <a
+          className="pk-btn-outline"
+          href={`mailto:${SITE_CONFIG.contactEmail}?subject=${encodeURIComponent("Delete my account")}&body=${encodeURIComponent("Please delete my account and saved properties. My account email is: " + currentUser.email)}`}
+        >
+          <Mail size={15} /> Request account deletion
+        </a>
       </div>
 
       {securitySlot}
@@ -1516,6 +1522,232 @@ function ProfilePage({ currentUser, onUpdateUser, favorites, listings, onToggleF
         )}
       </div>
     </section>
+  );
+}
+
+const LEGAL_UPDATED = "17 October 2026";
+
+function LegalPage({ title, intro, crumb, onBackHome, children }) {
+  return (
+    <section className="mx-auto max-w-3xl px-4 md:px-8 pt-8 md:pt-12 pb-20 pk-policy">
+      <p className="pk-mono text-xs uppercase tracking-wide mb-3 pk-breadcrumb">
+        <button onClick={onBackHome} className="pk-primary-text font-semibold">Home</button>
+        <span className="pk-ink-soft"> / {crumb}</span>
+      </p>
+      <h1 className="pk-display text-3xl md:text-5xl font-semibold mb-3">{title}</h1>
+      <p className="pk-ink-soft text-sm mb-6">Last updated {LEGAL_UPDATED}</p>
+      {intro && <p className="mb-4">{intro}</p>}
+      {children}
+    </section>
+  );
+}
+
+function PrivacyPage({ onBackHome, onOpenTerms }) {
+  const mail = SITE_CONFIG.contactEmail;
+  const link = (
+    <a className="pk-primary-text font-semibold" href={`mailto:${mail}`}>
+      {mail}
+    </a>
+  );
+  return (
+    <LegalPage
+      title="Privacy Policy"
+      crumb="Privacy Policy"
+      onBackHome={onBackHome}
+      intro="Hao yangu realtors runs this website to help people in Nakuru, Kenya find property listed by agents and owners. This policy explains what personal information we collect, why, who we share it with, and the choices and rights you have."
+    >
+      <h2 className="pk-display text-xl font-semibold">1. What we collect</h2>
+      <ul>
+        <li><strong>Your account:</strong> your name, your email address and your password, plus the properties you save. We never see your password in readable form. Our sign-in provider keeps it in protected form.</li>
+        <li><strong>Agents and staff:</strong> name, email, agency, area covered and photo. We also keep the date and a tick-list of the checks we completed when verifying an agent, and our private notes. We do not store copies of your documents on this website.</li>
+        <li><strong>Listings:</strong> the contact name, phone number, email address, photos and descriptions that agents or owners submit. These are shown publicly with the listing.</li>
+        <li><strong>Messages:</strong> anything you send us by email.</li>
+        <li><strong>Technical information:</strong> your IP address and device details are handled by our hosting and security providers when you visit. We keep anonymous counters, such as how many pages were viewed or searches made, which do not identify you. If error reporting is switched on, it records technical details of a fault.</li>
+        <li><strong>Information on your device:</strong> the site stores your sign-in details and saved properties in your browser so they work between visits. We do not use advertising or tracking cookies. Our security provider may set a small cookie to tell people from automated bots.</li>
+      </ul>
+
+      <h2 className="pk-display text-xl font-semibold">2. Why we use it</h2>
+      <ul>
+        <li>To create and run your account and keep your saved properties.</li>
+        <li>To show listings and agents, and to review and approve them.</li>
+        <li>To reply to your messages and send emails you need, such as confirming your email or resetting your password.</li>
+        <li>To keep the site secure and prevent fraud and abuse.</li>
+        <li>To understand, in anonymous totals, how the site is used.</li>
+        <li>To meet our legal duties.</li>
+      </ul>
+      <p>
+        Our reasons under the Data Protection Act, 2019 are: providing the service you asked for, our legitimate interest in running a safe and trustworthy property site, legal obligations, and your consent where we ask for it. You can withdraw consent at any time.
+      </p>
+
+      <h2 className="pk-display text-xl font-semibold">3. Who we share it with</h2>
+      <p>We do not sell personal information. We share it only with these groups.</p>
+      <ul>
+        <li><strong>Service providers that run the site for us:</strong> Supabase (database, sign-in and photo storage), Cloudflare (hosting and security, including a human check when we use it), and Resend (sending our emails). If we switch on error reporting, Sentry receives technical error details. Fonts are loaded from Google Fonts, which receives your IP address when the page loads.</li>
+        <li><strong>The public:</strong> listing details, including the contact details agents and owners choose to publish, and verified agents' public profiles.</li>
+        <li><strong>Authorities:</strong> when the law requires it, or to protect people from harm or fraud.</li>
+      </ul>
+
+      <h2 className="pk-display text-xl font-semibold">4. Storage outside Kenya</h2>
+      <p>
+        Our providers run servers outside Kenya, so your information is stored and processed abroad. These providers publish their own security and privacy terms. If you would like to know more about where your information is held, email us at {link}.
+      </p>
+
+      <h2 className="pk-display text-xl font-semibold">5. How long we keep it</h2>
+      <ul>
+        <li>Account information: until you delete your account or ask us to.</li>
+        <li>Agent and staff records: while you work with us, and for a reasonable time afterwards to deal with questions or disputes.</li>
+        <li>Listings: while they are live, and for a short time afterwards.</li>
+        <li>Emails: for as long as we need them to deal with your request.</li>
+        <li>Backups: removed as backups are replaced in the normal way.</li>
+        <li>Anonymous counters: they cannot identify you, so we may keep them.</li>
+      </ul>
+
+      <h2 className="pk-display text-xl font-semibold">6. How we protect it</h2>
+      <p>
+        The site uses encrypted connections. Staff accounts need a confirmed email address, and access to data is limited by rules in our database so people see only what they should. No system is perfectly secure. If you find a problem, please email {link}.
+      </p>
+
+      <h2 className="pk-display text-xl font-semibold">7. Your rights</h2>
+      <p>Under the Data Protection Act, 2019 you can:</p>
+      <ul>
+        <li>be told how your personal information is used;</li>
+        <li>ask for a copy of what we hold about you;</li>
+        <li>ask us to correct anything that is wrong or out of date;</li>
+        <li>ask us to delete your information;</li>
+        <li>object to certain uses, and withdraw consent you have given.</li>
+      </ul>
+      <p>
+        To use any of these, email {link}. We may need to confirm it is really you, and we aim to reply within 30 days. To delete your account, email us from the address on the account with the subject "Delete my account". We will delete the account and your saved properties. We may keep limited records where the law requires it.
+      </p>
+      <p>
+        If you are not happy with how we handle your information, you have the right to complain to the Office of the Data Protection Commissioner (odpc.go.ke).
+      </p>
+
+      <h2 className="pk-display text-xl font-semibold">8. Children</h2>
+      <p>
+        This site is for people aged 18 and over. We do not knowingly collect information from children. If you think a child has given us information, email us and we will delete it.
+      </p>
+
+      <h2 className="pk-display text-xl font-semibold">9. Other websites</h2>
+      <p>
+        We link to our social media pages and to other sites. They have their own privacy policies, and we are not responsible for them.
+      </p>
+
+      <h2 className="pk-display text-xl font-semibold">10. Changes and contact</h2>
+      <p>
+        We may update this policy. The date at the top shows the latest version, and we will tell you on the site or by email if a change is important. Questions: {link}. See also our{" "}
+        <button className="pk-primary-text font-semibold underline" onClick={onOpenTerms}>Terms of Use</button>.
+      </p>
+    </LegalPage>
+  );
+}
+
+function TermsPage({ onBackHome, onOpenPrivacy, onOpenVerification, onOpenAdvertise }) {
+  const mail = SITE_CONFIG.contactEmail;
+  const link = (
+    <a className="pk-primary-text font-semibold" href={`mailto:${mail}`}>
+      {mail}
+    </a>
+  );
+  return (
+    <LegalPage
+      title="Terms of Use"
+      crumb="Terms of Use"
+      onBackHome={onBackHome}
+      intro="These terms apply when you use the Hao yangu realtors website. By using the site or creating an account, you agree to them. If you do not agree, please do not use the site."
+    >
+      <h2 className="pk-display text-xl font-semibold">1. What we do</h2>
+      <p>
+        We publish property listings from agents and owners and help people contact them. Unless a listing clearly says Hao yangu realtors is the agent, we are not the seller, landlord or agent for the properties shown, and we are not part of any deal between you and an agent or owner.
+      </p>
+
+      <h2 className="pk-display text-xl font-semibold">2. Who can use the site</h2>
+      <p>You must be 18 or over and able to enter into a binding agreement.</p>
+
+      <h2 className="pk-display text-xl font-semibold">3. Your account</h2>
+      <ul>
+        <li>Give accurate information and keep it up to date.</li>
+        <li>Keep your password private. You are responsible for what happens on your account.</li>
+        <li>Tell us straight away if you think someone else has used your account.</li>
+        <li>You may delete your account at any time by emailing us (see our Privacy Policy).</li>
+      </ul>
+
+      <h2 className="pk-display text-xl font-semibold">4. Rules for agents and owners who list properties</h2>
+      <ul>
+        <li>Only advertise properties you are authorised to advertise.</li>
+        <li>Keep every detail accurate, current and not misleading. This includes price, location, size, photos and contact details.</li>
+        <li>Only upload photos and text you own or have permission to use. Photos must show the actual property.</li>
+        <li>Do not include unlawful, discriminatory or offensive content.</li>
+        <li>Never ask anyone for money just to view a property.</li>
+        <li>Remove or update a listing as soon as it is sold or let.</li>
+        <li>Follow the laws that apply to you, including any registration that applies to estate agents.</li>
+      </ul>
+      <p>
+        We review listings before they go live, but we may refuse, change or remove any listing or account at our discretion, for example if it is inaccurate, misleading or breaks these terms.
+      </p>
+
+      <h2 className="pk-display text-xl font-semibold">5. Featured listings</h2>
+      <p>
+        Featured listings are paid promotions, always labelled Featured. Price, payment and refund terms are agreed in writing when you book, and a listing is featured once payment is confirmed. Featuring does not mean we have checked the property more closely, and it does not guarantee any result. See{" "}
+        <button className="pk-primary-text font-semibold underline" onClick={onOpenAdvertise}>Promote your listing</button>.
+      </p>
+
+      <h2 className="pk-display text-xl font-semibold">6. Verified agents</h2>
+      <p>
+        A Verified badge means we completed the checks described on our{" "}
+        <button className="pk-primary-text font-semibold underline" onClick={onOpenVerification}>What Verified means</button> page. It is not a guarantee about any agent, property or deal.
+      </p>
+
+      <h2 className="pk-display text-xl font-semibold">7. Staying safe is your responsibility</h2>
+      <ul>
+        <li>View a property in person before you pay anything.</li>
+        <li>Check ownership documents with a lawyer or the relevant land registry before paying a deposit.</li>
+        <li>Pay only by traceable, documented methods, and never to someone you have not met.</li>
+      </ul>
+      <p>
+        We do not handle payments for property deals, and we are not responsible for what you agree with an agent or owner. If something looks wrong, email us at {link}.
+      </p>
+
+      <h2 className="pk-display text-xl font-semibold">8. What you must not do</h2>
+      <ul>
+        <li>Break the law, commit fraud or pretend to be someone else.</li>
+        <li>Harass or threaten other users.</li>
+        <li>Try to break into the site, bypass its security or overload it.</li>
+        <li>Copy large amounts of listings or data automatically without our written permission.</li>
+        <li>Upload viruses or other harmful files.</li>
+      </ul>
+
+      <h2 className="pk-display text-xl font-semibold">9. Content you submit</h2>
+      <p>
+        You keep ownership of what you submit. You give us a free, non-exclusive right to store, display and promote it on our website and our social media pages while it is listed with us, and as needed to run the site.
+      </p>
+
+      <h2 className="pk-display text-xl font-semibold">10. Our content</h2>
+      <p>
+        The site's design, name, logo and text belong to Hao yangu realtors or its licensors. Please do not copy or reuse them without our permission.
+      </p>
+
+      <h2 className="pk-display text-xl font-semibold">11. Availability</h2>
+      <p>
+        We try to keep the site running, but we cannot promise it will always be available or free of errors. We may change, pause or stop parts of it.
+      </p>
+
+      <h2 className="pk-display text-xl font-semibold">12. Limits on our responsibility</h2>
+      <p>
+        To the extent the law of Kenya allows, we are not responsible for losses that come from your dealings with agents or owners, from listings or information supplied by others, or from the site being unavailable. Nothing in these terms limits any responsibility that cannot lawfully be limited.
+      </p>
+
+      <h2 className="pk-display text-xl font-semibold">13. Suspending or ending access</h2>
+      <p>
+        We may suspend or remove an account or listing if these terms are broken, or to protect other people. You can stop using the site at any time.
+      </p>
+
+      <h2 className="pk-display text-xl font-semibold">14. Changes, law and contact</h2>
+      <p>
+        We may update these terms. The date at the top shows the latest version, and using the site after a change means you accept it. These terms are governed by the laws of Kenya, and the courts of Kenya can hear any dispute. Questions: {link}. See also our{" "}
+        <button className="pk-primary-text font-semibold underline" onClick={onOpenPrivacy}>Privacy Policy</button>.
+      </p>
+    </LegalPage>
   );
 }
 
@@ -3679,6 +3911,7 @@ export default function App() {
   const [authError, setAuthError] = useState("");
   const [authNotice, setAuthNotice] = useState("");
   const [showPw, setShowPw] = useState(false);
+  const [authAgree, setAuthAgree] = useState(false);
   const recoveryTokenRef = useRef(null);
   const authDialogRef = useRef(null);
   const drawerRef = useRef(null);
@@ -4002,6 +4235,18 @@ export default function App() {
     setMenuOpen(false);
     logEvent("pageViews");
   };
+  const goToPrivacy = () => {
+    setPage("privacy");
+    setScrollTarget("top");
+    setMenuOpen(false);
+    logEvent("pageViews");
+  };
+  const goToTerms = () => {
+    setPage("terms");
+    setScrollTarget("top");
+    setMenuOpen(false);
+    logEvent("pageViews");
+  };
   const goToVerification = () => {
     setPage("verification");
     setScrollTarget("top");
@@ -4048,6 +4293,8 @@ export default function App() {
     if (page === "detail" && selectedPropertyId !== null) return `/listing/${selectedPropertyId}`;
     if (page === "agents") return "/agents";
     if (page === "advertise") return "/advertise";
+    if (page === "privacy") return "/privacy";
+    if (page === "terms") return "/terms";
     if (page === "verification") return "/verification";
     if (page === "profile") return "/saved";
     if (page === "admin") return "/admin";
@@ -4063,6 +4310,10 @@ export default function App() {
       setPage("agents");
     } else if (clean === "/advertise") {
       setPage("advertise");
+    } else if (clean === "/privacy") {
+      setPage("privacy");
+    } else if (clean === "/terms") {
+      setPage("terms");
     } else if (clean === "/verification") {
       setPage("verification");
     } else if (clean === "/saved") {
@@ -4159,6 +4410,8 @@ export default function App() {
     if (page === "listings") title = `${names[listingCategory] || "Listings"} | ${base}`;
     else if (page === "agents") title = `Our agents | ${base}`;
     else if (page === "advertise") title = `Promote your listing | ${base}`;
+    else if (page === "privacy") title = `Privacy Policy | ${base}`;
+    else if (page === "terms") title = `Terms of Use | ${base}`;
     else if (page === "verification") title = `What Verified means | ${base}`;
     else if (page === "profile") title = `Saved properties | ${base}`;
     else if (page === "admin") title = `Staff sign in | ${base}`;
@@ -4206,6 +4459,7 @@ export default function App() {
     setAuthError("");
     setAuthNotice("");
     setShowPw(false);
+    setAuthAgree(false);
     setAuthForm((f) => ({ ...f, password: "", confirm: "", website: "" }));
     setAuthOpen(true);
     setMenuOpen(false);
@@ -4378,6 +4632,10 @@ export default function App() {
     }
     if (authTab === "signup" && !name.trim()) {
       setAuthError("Please enter your name.");
+      return;
+    }
+    if (authTab === "signup" && !authAgree) {
+      setAuthError("Please tick the box to agree to the Terms of Use and Privacy Policy.");
       return;
     }
     if (authTab === "signup" || authTab === "recovery") {
@@ -5045,6 +5303,10 @@ import.meta.env.PROD ? (
 
       {page === "verification" && <VerificationPage onBackHome={goHome} onOpenAgents={goToAgents} />}
 
+      {page === "privacy" && <PrivacyPage onBackHome={goHome} onOpenTerms={goToTerms} />}
+
+      {page === "terms" && <TermsPage onBackHome={goHome} onOpenPrivacy={goToPrivacy} onOpenVerification={goToVerification} onOpenAdvertise={goToAdvertise} />}
+
       {page === "profile" && (
         <ProfilePage
           currentUser={currentUser || account}
@@ -5121,8 +5383,14 @@ import.meta.env.PROD ? (
 
           <div className="flex flex-col md:flex-row items-center justify-between gap-4 pt-8 mt-10 text-xs pk-ink-soft" style={{ borderTop: "1px solid var(--border)" }}>
             <span>© 2026 {SITE_CONFIG.name}. All rights reserved.</span>
-            <div className="flex items-center gap-5">
+            <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2">
               <a href={`mailto:${SITE_CONFIG.contactEmail}`} className="flex items-center gap-1"><Mail size={13} /> {SITE_CONFIG.contactEmail}</a>
+              <button onClick={goToPrivacy} className="hover:underline">
+                Privacy Policy
+              </button>
+              <button onClick={goToTerms} className="hover:underline">
+                Terms of Use
+              </button>
               <button onClick={() => { setPage("admin"); setMenuOpen(false); }} className="hover:underline">
                 Staff sign in
               </button>
@@ -5199,6 +5467,22 @@ import.meta.env.PROD ? (
                   </label>
                   <p className="pk-ink-soft text-xs">At least 8 characters, with letters and a number.</p>
                 </>
+              )}
+              {authTab === "signup" && (
+                <label className="pk-check-row text-sm">
+                  <input type="checkbox" checked={authAgree} onChange={(e) => setAuthAgree(e.target.checked)} />
+                  <span>
+                    I am 18 or over, I agree to the{" "}
+                    <button type="button" className="pk-primary-text font-semibold underline" onClick={() => { setAuthOpen(false); goToTerms(); }}>
+                      Terms of Use
+                    </button>{" "}
+                    and I have read the{" "}
+                    <button type="button" className="pk-primary-text font-semibold underline" onClick={() => { setAuthOpen(false); goToPrivacy(); }}>
+                      Privacy Policy
+                    </button>
+                    .
+                  </span>
+                </label>
               )}
               <input
                 type="text"

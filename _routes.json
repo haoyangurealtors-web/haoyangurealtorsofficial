@@ -8,6 +8,8 @@
     "/land",
     "/listings",
     "/agents",
+    "/terms",
+    "/privacy",
     "/verification",
     "/advertise",
     "/listing/*",

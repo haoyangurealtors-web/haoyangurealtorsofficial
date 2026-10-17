@@ -25,6 +25,8 @@ const PAGES = {
   "/listings": { title: "All listings | " + SITE_NAME, description: "Every live property on Hao yangu realtors: buy, rent, commercial and land." },
   "/agents": { title: "Our agents | " + SITE_NAME, description: "Meet the verified agents on Hao yangu realtors." },
   "/advertise": { title: "Promote your listing | " + SITE_NAME, description: "Feature your property on Hao yangu realtors so more buyers and renters see it first." },
+  "/privacy": { title: "Privacy Policy | " + SITE_NAME, description: "How Hao yangu realtors collects, uses and protects your personal information." },
+  "/terms": { title: "Terms of Use | " + SITE_NAME, description: "The terms for using Hao yangu realtors, including rules for listings, featured listings and safety." },
   "/verification": { title: "What Verified means | " + SITE_NAME, description: "What our Verified agent badge means, what we check, and how to stay safe when buying or renting." },
 };
 
