@@ -477,6 +477,7 @@ function listingFromRow(r) {
     img: r.img,
     featured: Boolean(r.featured),
     featuredUntil: r.featured_until || null,
+    detailsLoaded: "contact" in r,
     description: r.description || "",
     amenities: Array.isArray(r.amenities) ? r.amenities : [],
     contact: r.contact || {},
@@ -577,18 +578,65 @@ async function syncRows(table, prev, next, toRow) {
   await Promise.all(ops);
 }
 
-async function fetchRemoteData(isSuperadmin) {
+// Visitors without an account only get the public part of a listing. Signed-in visitors get everything.
+const PUBLIC_LISTING_COLUMNS = "id,title,location,price_value,period,tag,beds,baths,size,acres,space_type,img,featured,featured_until,agency,status,created_at";
+const PUBLIC_AGENT_COLUMNS = "id,name,focus,area,agency,status,rating,reviews,img,verified_at,created_at";
+
+async function fetchRemoteData(isSuperadmin, isStaff = isSuperadmin) {
   const session = await getValidSession();
   const token = session ? session.access_token : undefined;
+  const listingColumns = token ? "*" : PUBLIC_LISTING_COLUMNS;
   const requests = [
-    sbRequest("/rest/v1/listings?select=*&order=id.desc&limit=500", { token }),
-    sbRequest("/rest/v1/agents?select=*&order=id.asc", { token }),
+    sbRequest(`/rest/v1/listings?select=${listingColumns}&order=id.desc&limit=500`, { token }),
+    sbRequest(`/rest/v1/agents?select=${PUBLIC_AGENT_COLUMNS}&order=id.asc`, { token }),
   ];
   if (token && isSuperadmin) requests.push(sbRequest("/rest/v1/staff?select=*&order=id.asc", { token }));
   const [listingRows, agentRows, staffRows] = await Promise.all(requests);
-  const data = { listings: listingRows.map(listingFromRow), agents: agentRows.map(agentFromRow) };
+  let agents = agentRows;
+  if (token && isStaff) {
+    // Staff also see the private notes and verification details, which are never sent to anyone else.
+    try {
+      const priv = await sbRequest("/rest/v1/rpc/agent_private", { method: "POST", token, body: {} });
+      const byId = new Map((priv || []).map((p) => [Number(p.id), p]));
+      agents = agentRows.map((r) => {
+        const extra = byId.get(Number(r.id));
+        return extra ? { ...r, comments: extra.comments, verification: extra.verification } : r;
+      });
+    } catch (e) {
+      // Before the database update is applied the full table is still readable, so fall back to it.
+      agents = await sbRequest("/rest/v1/agents?select=*&order=id.asc", { token });
+    }
+  }
+  const data = { listings: listingRows.map(listingFromRow), agents: agents.map(agentFromRow) };
   if (staffRows) data.admins = staffRows.filter((r) => r.role === "admin").map(staffFromRow);
   return data;
+}
+
+// Remember where a visitor was heading, so they land there after creating an account or logging in.
+const INTENT_KEY = "hy-realtors:after-login";
+function saveIntent(path) {
+  try {
+    window.localStorage.setItem(INTENT_KEY, JSON.stringify({ path, at: Date.now() }));
+  } catch (e) {
+    /* ignore */
+  }
+}
+function clearIntent() {
+  try {
+    window.localStorage.removeItem(INTENT_KEY);
+  } catch (e) {
+    /* ignore */
+  }
+}
+function takeIntent() {
+  try {
+    const raw = window.localStorage.getItem(INTENT_KEY);
+    window.localStorage.removeItem(INTENT_KEY);
+    const v = raw ? JSON.parse(raw) : null;
+    return v && v.path && Date.now() - v.at < 3600000 ? v.path : null;
+  } catch (e) {
+    return null;
+  }
 }
 
 function dataUrlToBlob(dataUrl) {
@@ -1560,7 +1608,7 @@ function PrivacyPage({ onBackHome, onOpenTerms }) {
       <ul>
         <li><strong>Your account:</strong> your name, your email address and your password, plus the properties you save. We never see your password in readable form. Our sign-in provider keeps it in protected form.</li>
         <li><strong>Agents and staff:</strong> name, email, agency, area covered and photo. We also keep the date and a tick-list of the checks we completed when verifying an agent, and our private notes. We do not store copies of your documents on this website.</li>
-        <li><strong>Listings:</strong> the contact name, phone number, email address, photos and descriptions that agents or owners submit. These are shown publicly with the listing.</li>
+        <li><strong>Listings:</strong> the contact name, phone number, email address, photos and descriptions that agents or owners submit. Anyone can see the basic part of a listing (photo, title, location, price and basic facts). The rest, including the contact details, is shown to visitors who have an account.</li>
         <li><strong>Messages:</strong> anything you send us by email.</li>
         <li><strong>Technical information:</strong> your IP address and device details are handled by our hosting and security providers when you visit. We keep anonymous counters, such as how many pages were viewed or searches made, which do not identify you. If error reporting is switched on, it records technical details of a fault.</li>
         <li><strong>Information on your device:</strong> the site stores your sign-in details and saved properties in your browser so they work between visits. We do not use advertising or tracking cookies. Our security provider may set a small cookie to tell people from automated bots.</li>
@@ -1583,7 +1631,7 @@ function PrivacyPage({ onBackHome, onOpenTerms }) {
       <p>We do not sell personal information. We share it only with these groups.</p>
       <ul>
         <li><strong>Service providers that run the site for us:</strong> Supabase (database, sign-in and photo storage), Cloudflare (hosting and security, including a human check when we use it), and Resend (sending our emails). If we switch on error reporting, Sentry receives technical error details. Fonts are loaded from Google Fonts, which receives your IP address when the page loads.</li>
-        <li><strong>The public:</strong> listing details, including the contact details agents and owners choose to publish, and verified agents' public profiles.</li>
+        <li><strong>Visitors:</strong> the basic part of each listing and verified agents' public profiles are visible to everyone. The full description and the contact details that agents and owners choose to publish are shown to visitors who have an account.</li>
         <li><strong>Authorities:</strong> when the law requires it, or to protect people from harm or fraud.</li>
       </ul>
 
@@ -1669,6 +1717,7 @@ function TermsPage({ onBackHome, onOpenPrivacy, onOpenVerification, onOpenAdvert
         <li>Give accurate information and keep it up to date.</li>
         <li>Keep your password private. You are responsible for what happens on your account.</li>
         <li>Tell us straight away if you think someone else has used your account.</li>
+        <li>Some listing and agent details are shown only to people with an account.</li>
         <li>You may delete your account at any time by emailing us (see our Privacy Policy).</li>
       </ul>
 
@@ -1859,7 +1908,7 @@ function VerificationPage({ onBackHome, onOpenAgents }) {
   );
 }
 
-function AgentsPage({ agents, onBackHome, onOpenModal, onOpenVerification }) {
+function AgentsPage({ agents, onBackHome, onOpenModal, onOpenVerification, locked = false, onRequireAccount }) {
   const visible = agents.filter((a) => a.status === "verified");
   const [contactOpen, setContactOpen] = useState(false);
 
@@ -1890,7 +1939,24 @@ function AgentsPage({ agents, onBackHome, onOpenModal, onOpenVerification }) {
 
       <div className="pk-agents-grid">
         {visible.map((a) => (
-          <div key={a.id} className="pk-card p-6 flex flex-col items-center text-center gap-2">
+          <div
+            key={a.id}
+            className="pk-card p-6 flex flex-col items-center text-center gap-2"
+            {...(locked
+              ? {
+                  role: "button",
+                  tabIndex: 0,
+                  style: { cursor: "pointer" },
+                  onClick: onRequireAccount,
+                  onKeyDown: (e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      onRequireAccount();
+                    }
+                  },
+                }
+              : {})}
+          >
             <ImageWithFallback src={a.img} alt={a.name} className="pk-agent-photo-lg" iconFallback={Users} />
             <h3 className="font-semibold mt-2 flex items-center gap-1">
               {a.name}
@@ -1902,12 +1968,24 @@ function AgentsPage({ agents, onBackHome, onOpenModal, onOpenVerification }) {
             </p>
             {a.verifiedAt && <p className="pk-ink-soft text-xs">Verified {formatShortDate(a.verifiedAt)}</p>}
             <AgentScore rating={a.rating} reviews={a.reviews} />
-            <a
-              className="pk-btn-outline mt-3"
-              href={`mailto:${SITE_CONFIG.contactEmail}?subject=${encodeURIComponent("Enquiry about agent " + a.name)}`}
-            >
-              <Mail size={14} /> Enquire
-            </a>
+            {locked ? (
+              <button
+                className="pk-btn-outline mt-3"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRequireAccount();
+                }}
+              >
+                <Mail size={14} /> Enquire
+              </button>
+            ) : (
+              <a
+                className="pk-btn-outline mt-3"
+                href={`mailto:${SITE_CONFIG.contactEmail}?subject=${encodeURIComponent("Enquiry about agent " + a.name)}`}
+              >
+                <Mail size={14} /> Enquire
+              </a>
+            )}
           </div>
         ))}
       </div>
@@ -2346,6 +2424,9 @@ function RemoteStaffGate({ account, staffState, onLogin, onVerifyCode, onMfaDone
   return (
     <div className="pk-admin-gate">
       <div className="pk-admin-gate-card">
+        <div className="flex justify-center mb-4">
+          <LogoMark size={44} />
+        </div>
         <div className="pk-admin-gate-icon">
           <Lock size={22} />
         </div>
@@ -2419,6 +2500,9 @@ function StaffGate({ admins, onAuthenticate, onExit }) {
   return (
     <div className="pk-admin-gate">
       <div className="pk-admin-gate-card">
+        <div className="flex justify-center mb-4">
+          <LogoMark size={44} />
+        </div>
         <div className="pk-admin-gate-icon">
           <Lock size={22} />
         </div>
@@ -3734,8 +3818,8 @@ function AgencyAdminConsole({ theme, setTheme, onExit, currentAdmin, listings, o
   return (
     <div className="pk-admin-shell">
       <div className="pk-admin-topbar">
-        <div className="flex items-center gap-2">
-          <Shield size={18} className="pk-primary-text" />
+        <div className="flex items-center gap-3">
+          <LogoMark size={30} />
           <div>
             <div className="pk-display font-semibold" style={{ lineHeight: 1.15 }}>
               Hao yangu realtors admin
@@ -3836,8 +3920,8 @@ function AdminConsole({ theme, setTheme, onExit, listings, onUpdateListings, age
   return (
     <div className="pk-admin-shell">
       <div className="pk-admin-topbar">
-        <div className="flex items-center gap-2">
-          <Shield size={18} className="pk-primary-text" />
+        <div className="flex items-center gap-3">
+          <LogoMark size={30} />
           <span className="pk-display font-semibold">Hao yangu realtors admin</span>
         </div>
         <div className="flex items-center gap-2">
@@ -3912,6 +3996,9 @@ export default function App() {
   const [authNotice, setAuthNotice] = useState("");
   const [showPw, setShowPw] = useState(false);
   const [authAgree, setAuthAgree] = useState(false);
+  const [authIntro, setAuthIntro] = useState("");
+  const [authChecked, setAuthChecked] = useState(!AUTH_ENABLED);
+  const gateAutoFor = useRef(null);
   const recoveryTokenRef = useRef(null);
   const authDialogRef = useRef(null);
   const drawerRef = useRef(null);
@@ -4040,7 +4127,7 @@ export default function App() {
 
   const refreshRemote = async () => {
     try {
-      const data = await fetchRemoteData(Boolean(currentUser && currentUser.role === "superadmin"));
+      const data = await fetchRemoteData(Boolean(currentUser && currentUser.role === "superadmin"), Boolean(currentUser));
       setListings(data.listings);
       setAgents(data.agents);
       if (data.admins) setAdmins(data.admins);
@@ -4066,7 +4153,7 @@ export default function App() {
     }, currentUser && currentUser.role === "superadmin" ? 15000 : 120000);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentUser && currentUser.email, currentUser && currentUser.role]);
+  }, [currentUser && currentUser.email, currentUser && currentUser.role, account && account.id]);
 
   const reportSyncError = (err) => {
     setSyncError(friendlySyncError(err));
@@ -4277,6 +4364,35 @@ export default function App() {
     goToListings(key);
   };
 
+  const locked = AUTH_ENABLED && !account && !currentUser;
+  const GATE_LISTING_MESSAGE = "Create a free account to see the full details of this property and contact the agent.";
+  const GATE_AGENT_MESSAGE = "Create a free account to see agent details and get in touch.";
+
+  const openListing = (id) => {
+    if (locked) {
+      saveIntent(`/listing/${id}`);
+      openAuth("signup", GATE_LISTING_MESSAGE);
+      return;
+    }
+    viewProperty(id);
+  };
+  const requireAccountForAgents = () => {
+    saveIntent("/agents");
+    openAuth("signup", GATE_AGENT_MESSAGE);
+  };
+
+  // Someone arriving straight on a listing address (for example from WhatsApp) sees the sign-up pop-up once.
+  useEffect(() => {
+    if (!(page === "detail" && locked && authChecked)) return;
+    if (gateAutoFor.current === selectedPropertyId) return;
+    gateAutoFor.current = selectedPropertyId;
+    saveIntent(`/listing/${selectedPropertyId}`);
+    setAuthIntro(GATE_LISTING_MESSAGE);
+    setAuthTab("signup");
+    setAuthOpen(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, locked, authChecked, selectedPropertyId]);
+
   const viewProperty = (id) => {
     setSelectedPropertyId(id);
     logEvent("pageViews");
@@ -4454,7 +4570,9 @@ export default function App() {
     }
   };
 
-  const openAuth = (tab = "login") => {
+  const openAuth = (tab = "login", intro = "") => {
+    if (!intro) clearIntent();
+    setAuthIntro(intro);
     setAuthTab(tab);
     setAuthError("");
     setAuthNotice("");
@@ -4478,6 +4596,8 @@ export default function App() {
   const establishSession = (session) => {
     saveSession(session);
     setAccount(session.user);
+    const intent = takeIntent();
+    if (intent) applyPath(intent);
   };
 
   // Restore a saved login, or finish a confirmation / password-reset link opened from an email.
@@ -4508,7 +4628,11 @@ export default function App() {
               user: toAccount(user),
             };
             saveSession(session);
-            if (!cancelled) setAccount(session.user);
+            if (!cancelled) {
+              setAccount(session.user);
+              const intent = takeIntent();
+              if (intent) applyPath(intent);
+            }
           }
         } else {
           const session = await getValidSession();
@@ -4516,6 +4640,8 @@ export default function App() {
         }
       } catch (e) {
         /* stay logged out */
+      } finally {
+        if (!cancelled) setAuthChecked(true);
       }
     })();
     return () => {
@@ -4788,7 +4914,10 @@ REMOTE ? (
 import.meta.env.PROD ? (
           <div className="pk-admin-gate">
             <div className="pk-admin-gate-card">
-              <div className="pk-admin-gate-icon">
+              <div className="flex justify-center mb-4">
+          <LogoMark size={44} />
+        </div>
+        <div className="pk-admin-gate-icon">
                 <Lock size={22} />
               </div>
               <h1 className="pk-display text-2xl font-semibold mb-1">Staff sign in isn't set up</h1>
@@ -5146,7 +5275,7 @@ import.meta.env.PROD ? (
                   property={p}
                   isFavorite={favorites.has(p.id)}
                   onToggleFavorite={toggleFavorite}
-                  onSelect={viewProperty}
+                  onSelect={openListing}
                   style={{ width: "78vw", maxWidth: 300 }}
                 />
               ))}
@@ -5192,7 +5321,24 @@ import.meta.env.PROD ? (
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6">
           {verifiedAgents.map((a) => (
-            <div key={a.id} className="pk-card p-5 flex flex-col items-center text-center gap-2">
+            <div
+              key={a.id}
+              className="pk-card p-5 flex flex-col items-center text-center gap-2"
+              {...(locked
+                ? {
+                    role: "button",
+                    tabIndex: 0,
+                    style: { cursor: "pointer" },
+                    onClick: requireAccountForAgents,
+                    onKeyDown: (e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        requireAccountForAgents();
+                      }
+                    },
+                  }
+                : {})}
+            >
               <ImageWithFallback src={a.img} alt={a.name} className="pk-agent-photo" iconFallback={Users} />
               <h3 className="font-semibold mt-1 flex items-center gap-1">
                 {a.name}
@@ -5261,12 +5407,46 @@ import.meta.env.PROD ? (
           results={filteredProperties}
           favorites={favorites}
           onToggleFavorite={toggleFavorite}
-          onSelectProperty={viewProperty}
+          onSelectProperty={openListing}
           onClearFilters={handleClearFilters}
         />
       )}
 
-      {page === "detail" && selectedProperty && (
+      {page === "detail" && locked && authChecked && (
+        <section className="mx-auto max-w-2xl px-4 pt-16 md:pt-24 pb-24 text-center">
+          {selectedProperty && (
+            <div className="mb-6">
+              <ImageWithFallback
+                src={thumbSrc(selectedProperty.img)}
+                fallbackSrc={selectedProperty.img}
+                alt={selectedProperty.title}
+                className="pk-prop-media-img"
+                iconFallback={HomeIcon}
+              />
+              <h2 className="pk-display text-2xl font-semibold mt-4">{selectedProperty.title}</h2>
+              <p className="pk-ink-soft text-sm mt-1">{selectedProperty.location} · {selectedProperty.price}</p>
+            </div>
+          )}
+          <h1 className="pk-display text-3xl font-semibold mb-3">Create a free account to see the full details</h1>
+          <p className="pk-ink-soft text-sm mb-6">Descriptions, extra details and contact options are shown to people with an account. It takes a minute.</p>
+          <div className="flex flex-wrap gap-3 justify-center">
+            <button className="pk-btn-primary" onClick={() => openAuth("signup", GATE_LISTING_MESSAGE)}>
+              <UserPlus size={15} /> Create free account
+            </button>
+            <button className="pk-btn-outline" onClick={() => openAuth("login")}>
+              Log in
+            </button>
+          </div>
+        </section>
+      )}
+
+      {page === "detail" && !locked && selectedProperty && selectedProperty.detailsLoaded === false && (
+        <section className="mx-auto max-w-3xl px-4 pt-28 pb-24 text-center">
+          <p className="pk-ink-soft text-sm">Loading details…</p>
+        </section>
+      )}
+
+      {page === "detail" && !locked && selectedProperty && selectedProperty.detailsLoaded !== false && (
         <PropertyDetailPage
           key={selectedProperty.id}
           property={selectedProperty}
@@ -5276,12 +5456,12 @@ import.meta.env.PROD ? (
           favorites={favorites}
           onToggleFavorite={toggleFavorite}
           similar={similarProperties}
-          onSelectProperty={viewProperty}
+          onSelectProperty={openListing}
           onOpenModal={openAuth}
         />
       )}
 
-      {page === "detail" && !selectedProperty && (
+      {page === "detail" && !locked && !selectedProperty && (
         <section className="mx-auto max-w-3xl px-4 pt-28 pb-24 text-center">
           {dataReady ? (
             <>
@@ -5297,7 +5477,7 @@ import.meta.env.PROD ? (
         </section>
       )}
 
-      {page === "agents" && <AgentsPage agents={agents} onBackHome={goHome} onOpenModal={openAuth} onOpenVerification={goToVerification} />}
+      {page === "agents" && <AgentsPage agents={agents} onBackHome={goHome} onOpenModal={openAuth} onOpenVerification={goToVerification} locked={locked} onRequireAccount={requireAccountForAgents} />}
 
       {page === "advertise" && <AdvertisePage onBackHome={goHome} onBrowse={() => goToListings("all")} />}
 
@@ -5317,7 +5497,7 @@ import.meta.env.PROD ? (
           favorites={favorites}
           listings={approvedListings}
           onToggleFavorite={toggleFavorite}
-          onSelectProperty={viewProperty}
+          onSelectProperty={openListing}
           onBackHome={goHome}
           onLogout={currentUser ? handleLogout : handleAccountLogout}
           onGoAdmin={() => setPage("admin")}
@@ -5412,6 +5592,11 @@ import.meta.env.PROD ? (
               </button>
             </div>
 
+            {authIntro && (
+              <p className="pk-admin-notice mb-4" role="status">
+                {authIntro}
+              </p>
+            )}
             {(authTab === "login" || authTab === "signup") && (
               <div className="flex mb-5">
                 <button type="button" className={`pk-modal-tab ${authTab === "login" ? "pk-modal-tab-active" : ""}`} onClick={() => switchAuthTab("login")}>

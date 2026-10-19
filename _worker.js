@@ -115,15 +115,14 @@ async function pageShell(request, env, url, path) {
 async function listingShell(request, env, url, id) {
   const html = await loadShell(request, env, url);
   if (html === null) return null;
-  const rows = await supabaseGet(env, "listings?select=id,title,location,price_value,period,tag,beds,baths,size,description,img,created_at&status=eq.approved&id=eq." + id + "&limit=1");
+  const rows = await supabaseGet(env, "listings?select=id,title,location,price_value,period,tag,beds,baths,size,img,created_at&status=eq.approved&id=eq." + id + "&limit=1");
   const l = rows && rows[0];
   if (!l) return htmlResponse(html, 60); // unknown or hidden listing: normal page, the app shows its own message
   const price = formatPrice(l.price_value) + (l.period || "");
   const facts = [l.beds != null ? l.beds + " bed" : "", l.baths != null ? l.baths + " bath" : "", l.size || ""].filter(Boolean).join(", ");
   const title = l.title + ", " + l.location + " | " + SITE_NAME;
   const lead = (price + " | " + l.tag + " | " + l.location + (facts ? " | " + facts : "")).trim();
-  const body = String(l.description || "").replace(/\s+/g, " ").trim();
-  const description = (lead + (body ? ". " + body : "")).slice(0, 200);
+  const description = lead.slice(0, 200);
   const image = /^https:\/\//i.test(l.img || "") ? l.img : url.origin + "/og-image.jpg";
   const pageUrl = url.origin + "/listing/" + l.id;
   let out = applyMeta(html, { title, description, url: pageUrl, image });
@@ -131,7 +130,7 @@ async function listingShell(request, env, url, id) {
     "@context": "https://schema.org",
     "@type": "RealEstateListing",
     name: l.title,
-    description: body || lead,
+    description: lead,
     url: pageUrl,
     image,
     datePosted: l.created_at,
