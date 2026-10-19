@@ -13,6 +13,7 @@ import {
   Ruler,
   Heart,
   ChevronRight,
+  ChevronLeft,
   ChevronDown,
   ChevronUp,
   Check,
@@ -911,7 +912,7 @@ function VerifiedBadge({ size = 15 }) {
   );
 }
 
-function ImageWithFallback({ src, fallbackSrc, alt, className, iconFallback: Icon = HomeIcon }) {
+function ImageWithFallback({ src, fallbackSrc, alt, className, iconFallback: Icon = HomeIcon, eager = false }) {
   const [current, setCurrent] = useState(src);
   const [failed, setFailed] = useState(false);
   useEffect(() => {
@@ -930,7 +931,7 @@ function ImageWithFallback({ src, fallbackSrc, alt, className, iconFallback: Ico
       src={current}
       alt={alt}
       className={className}
-      loading="lazy"
+      loading={eager ? "eager" : "lazy"}
       decoding="async"
       onError={() => {
         if (fallbackSrc && current !== fallbackSrc) setCurrent(fallbackSrc);
@@ -1154,6 +1155,309 @@ function PropertyCard({ property, isFavorite, onToggleFavorite, onSelect, style 
         </div>
       </div>
     </article>
+  );
+}
+
+// ---------- Home hero: featured carousel, slim search card, mobile search sheet ----------
+const HERO_TAG = {
+  buy: { label: "For Sale", icon: HomeIcon },
+  rent: { label: "For Rent", icon: KeyRound },
+  commercial: { label: "Commercial", icon: Building2 },
+  land: { label: "Land", icon: TreePine },
+};
+
+function HeroCarousel({ items, onOpen }) {
+  const n = items.length;
+  const [index, setIndex] = useState(0);
+  const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const [touching, setTouching] = useState(false);
+  const [tabVisible, setTabVisible] = useState(true);
+  const [reduceMotion, setReduceMotion] = useState(false);
+  const drag = useRef({ x: 0, y: 0, active: false, moved: false });
+  const stepRef = useRef(0);
+  const prevOffsets = useRef([]);
+
+  useEffect(() => {
+    const mq = window.matchMedia ? window.matchMedia("(prefers-reduced-motion: reduce)") : null;
+    setReduceMotion(Boolean(mq && mq.matches));
+    const onVis = () => setTabVisible(!document.hidden);
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, []);
+
+  // If the list gets shorter while someone is looking at it, never point past the end.
+  useEffect(() => {
+    if (index >= n) setIndex(0);
+  }, [n, index]);
+
+  const move = (delta) => {
+    stepRef.current = delta;
+    setIndex((i) => (((i + delta) % n) + n) % n);
+  };
+  const jump = (i) => {
+    stepRef.current = 0;
+    setIndex(i);
+  };
+
+  const paused = hovered || focused || touching || !tabVisible || reduceMotion || n < 2;
+  useEffect(() => {
+    if (paused) return undefined;
+    const t = setTimeout(() => move(1), 5000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [index, paused, n]);
+
+  const offsetOf = (i) => {
+    let d = (i - index + n) % n;
+    if (d > n / 2) d -= n;
+    return d;
+  };
+  const offsets = items.map((_, i) => offsetOf(i));
+  // A slide that hops from one side to the other during a one-step move should jump, not fly across.
+  const noAnim = offsets.map((d, i) => Math.abs(stepRef.current) === 1 && prevOffsets.current[i] !== undefined && Math.abs(d - prevOffsets.current[i]) >= 2);
+  useEffect(() => {
+    prevOffsets.current = offsets;
+  });
+
+  const onPointerDown = (e) => {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    drag.current = { x: e.clientX, y: e.clientY, active: true, moved: false };
+    if (e.pointerType !== "mouse") setTouching(true);
+  };
+  const onPointerMove = (e) => {
+    const d = drag.current;
+    if (d.active && Math.abs(e.clientX - d.x) > 10) d.moved = true;
+  };
+  const endDrag = (e, cancelled) => {
+    const d = drag.current;
+    if (!d.active) return;
+    d.active = false;
+    setTouching(false);
+    if (cancelled) return;
+    const dx = e.clientX - d.x;
+    const dy = e.clientY - d.y;
+    if (Math.abs(dx) > 45 && Math.abs(dx) > Math.abs(dy)) move(dx < 0 ? 1 : -1);
+  };
+
+  const current = items[index] || items[0];
+  if (!current) return null;
+
+  return (
+    <div
+      className="pk-hc"
+      role="region"
+      aria-roledescription="carousel"
+      aria-label="Featured listings"
+      onPointerEnter={(e) => e.pointerType === "mouse" && setHovered(true)}
+      onPointerLeave={(e) => e.pointerType === "mouse" && setHovered(false)}
+      onFocus={() => setFocused(true)}
+      onBlur={() => setFocused(false)}
+      onKeyDown={(e) => {
+        if (e.key === "ArrowLeft") move(-1);
+        if (e.key === "ArrowRight") move(1);
+      }}
+    >
+      <div className="pk-hc-viewport">
+        <div
+          className="pk-hc-stage"
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={(e) => endDrag(e, false)}
+          onPointerCancel={(e) => endDrag(e, true)}
+        >
+          {items.map((l, i) => {
+            const d = offsets[i];
+            const pos = d === 0 ? "0" : d === -1 ? "-1" : d === 1 ? "1" : d < 0 ? "far-l" : "far-r";
+            const tag = HERO_TAG[String(l.tag || "").toLowerCase()] || { label: l.tag, icon: HomeIcon };
+            const TagIcon = tag.icon;
+            const isCurrent = d === 0;
+            const activate = () => {
+              if (drag.current.moved) {
+                drag.current.moved = false;
+                return;
+              }
+              if (isCurrent) onOpen(l.id);
+              else if (d === 1) move(1);
+              else if (d === -1) move(-1);
+            };
+            return (
+              <div
+                key={l.id}
+                className="pk-hc-slide"
+                data-pos={pos}
+                data-noanim={noAnim[i] ? "true" : "false"}
+                role={isCurrent ? "button" : undefined}
+                tabIndex={isCurrent ? 0 : -1}
+                aria-hidden={isCurrent ? undefined : true}
+                aria-label={isCurrent ? `${l.title}, ${l.location}, ${l.price}${l.period || ""}. Open listing` : undefined}
+                onClick={activate}
+                onKeyDown={(e) => {
+                  if (isCurrent && (e.key === "Enter" || e.key === " ")) {
+                    e.preventDefault();
+                    onOpen(l.id);
+                  }
+                }}
+              >
+                <ImageWithFallback src={l.img} alt="" className="pk-hc-img" iconFallback={HomeIcon} eager={i === 0} />
+                <span className="pk-hc-badge pk-hc-badge-top">
+                  <TagIcon size={20} aria-hidden="true" />
+                  <span>
+                    <strong>{tag.label}</strong>
+                    <em>{l.price}{l.period || ""}</em>
+                  </span>
+                </span>
+                <span className="pk-hc-badge pk-hc-badge-bottom">
+                  <MapPin size={20} aria-hidden="true" />
+                  <span>
+                    <strong>{l.title}</strong>
+                    <em>{l.location}</em>
+                  </span>
+                </span>
+              </div>
+            );
+          })}
+          {n > 1 && (
+            <>
+              <button type="button" className="pk-hc-arrow pk-hc-arrow-prev" aria-label="Previous listing" onClick={() => move(-1)}>
+                <ChevronLeft size={22} />
+              </button>
+              <button type="button" className="pk-hc-arrow pk-hc-arrow-next" aria-label="Next listing" onClick={() => move(1)}>
+                <ChevronRight size={22} />
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+      {n > 1 && (
+        <div className="pk-hc-dots">
+          {items.map((l, i) => (
+            <button key={l.id} type="button" className="pk-hc-dot" aria-label={`Show listing ${i + 1} of ${n}`} aria-current={i === index ? "true" : undefined} onClick={() => jump(i)} />
+          ))}
+        </div>
+      )}
+      <div className="sr-only" aria-live={paused ? "polite" : "off"}>
+        {`Listing ${index + 1} of ${n}: ${current.title}`}
+      </div>
+    </div>
+  );
+}
+
+function HeroSearch({ idPrefix, sheet = false, activeTab, onTabChange, location, setLocation, secondary, setSecondary, budget, setBudget, onSearch }) {
+  const meta = TAB_META[activeTab];
+  return (
+    <div className={`pk-search-card ${sheet ? "pk-search-card-sheet" : ""}`}>
+      <div className="pk-tab-row" style={{ scrollbarWidth: "none" }}>
+        {Object.entries(TAB_META).map(([key, m]) => {
+          const TIcon = m.icon;
+          return (
+            <button key={key} type="button" aria-pressed={activeTab === key} className={`pk-tab ${activeTab === key ? "pk-tab-active" : ""}`} onClick={() => onTabChange(key)}>
+              <TIcon size={14} /> {m.label}
+            </button>
+          );
+        })}
+      </div>
+      <div className="pk-search-grid">
+        <div className="pk-field">
+          <label htmlFor={`${idPrefix}-location`}>Location</label>
+          <div className="flex items-center gap-2">
+            <MapPin size={15} className="pk-ink-soft" />
+            <input
+              aria-label="Search by location"
+              id={`${idPrefix}-location`}
+              type="text"
+              placeholder="Try Milimani, Section 58, Lanet…"
+              value={location}
+              onChange={(e) => setLocation(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && onSearch()}
+            />
+          </div>
+        </div>
+        <CustomSelect id={`${idPrefix}-secondary`} label={meta.secondaryLabel} value={secondary} options={meta.secondaryOptions} onChange={setSecondary} />
+        <CustomSelect id={`${idPrefix}-budget`} label="Budget" value={budget} options={meta.budgetOptions} onChange={setBudget} />
+        <button type="button" className="pk-btn-primary justify-center pk-search-btn" onClick={onSearch}>
+          <Search size={16} /> Search
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function HeroShortcuts({ onPick }) {
+  const items = [
+    { key: "buy", label: "Buy", icon: HomeIcon },
+    { key: "rent", label: "Rent", icon: KeyRound },
+    { key: "commercial", label: "Commercial", icon: Building2 },
+    { key: "land", label: "Land", icon: TreePine },
+    { key: "agents", label: "Agents", icon: Users },
+  ];
+  return (
+    <nav className="pk-shortcuts" aria-label="Browse by category">
+      {items.map((it) => {
+        const Icon = it.icon;
+        return (
+          <button key={it.key} type="button" className="pk-shortcut" onClick={() => onPick(it.key)}>
+            <span className="pk-shortcut-icon"><Icon size={22} strokeWidth={1.8} /></span>
+            <span>{it.label}</span>
+          </button>
+        );
+      })}
+    </nav>
+  );
+}
+
+// Mobile search: a panel that slides up from the bottom.
+function SearchSheet({ open, onClose, children }) {
+  const ref = useRef(null);
+  const [lingering, setLingering] = useState(false);
+  const [shown, setShown] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setLingering(true);
+      let r2;
+      const r1 = requestAnimationFrame(() => {
+        r2 = requestAnimationFrame(() => setShown(true));
+      });
+      return () => {
+        cancelAnimationFrame(r1);
+        cancelAnimationFrame(r2);
+      };
+    }
+    setShown(false);
+    const t = setTimeout(() => setLingering(false), 300);
+    return () => clearTimeout(t);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const onKey = (e) => e.key === "Escape" && onClose();
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = previous;
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open, onClose]);
+
+  useDialogFocus(open, ref);
+
+  if (!open && !lingering) return null;
+  return (
+    <div className={`pk-sheet-root ${shown && open ? "pk-sheet-open" : ""}`}>
+      <div className="pk-sheet-backdrop" onClick={onClose} />
+      <div ref={ref} className="pk-sheet" role="dialog" aria-modal="true" aria-label="Search properties" tabIndex={-1}>
+        <div className="pk-sheet-head">
+          <span className="pk-sheet-grab" aria-hidden="true" />
+          <h2 className="pk-display text-lg font-semibold">Search properties</h2>
+          <button type="button" className="pk-icon-btn" aria-label="Close search" onClick={onClose}>
+            <X size={18} />
+          </button>
+        </div>
+        {children}
+      </div>
+    </div>
   );
 }
 
@@ -4028,6 +4332,7 @@ export default function App() {
   const pendingStatsRef = useRef({});
   const statsFlushScheduled = useRef(false);
 
+  const [searchSheetOpen, setSearchSheetOpen] = useState(false);
   const heroRef = useRef(null);
   const featuredRef = useRef(null);
   const agentsRef = useRef(null);
@@ -4381,6 +4686,25 @@ export default function App() {
     openAuth("signup", GATE_AGENT_MESSAGE);
   };
 
+  const closeSearchSheet = () => setSearchSheetOpen(false);
+  const handleShortcut = (key) => {
+    if (key === "agents") {
+      if (locked) requireAccountForAgents();
+      else goToAgents();
+      return;
+    }
+    goToListings(key);
+  };
+
+  // The mobile search sheet has no place on a wide screen, so close it if the window grows.
+  useEffect(() => {
+    if (!searchSheetOpen || !window.matchMedia) return undefined;
+    const mq = window.matchMedia("(min-width: 768px)");
+    const onChange = () => mq.matches && setSearchSheetOpen(false);
+    mq.addEventListener ? mq.addEventListener("change", onChange) : mq.addListener(onChange);
+    return () => (mq.removeEventListener ? mq.removeEventListener("change", onChange) : mq.removeListener(onChange));
+  }, [searchSheetOpen]);
+
   // Someone arriving straight on a listing address (for example from WhatsApp) sees the sign-up pop-up once.
   useEffect(() => {
     if (!(page === "detail" && locked && authChecked)) return;
@@ -4515,6 +4839,9 @@ export default function App() {
     const rest = approvedListings.filter((l) => !isFeatured(l));
     return [...promoted, ...rest].slice(0, 8);
   }, [approvedListings]);
+
+  // The home carousel shows promoted (featured) listings only: newest first, at most five.
+  const heroFeatured = useMemo(() => approvedListings.filter(isFeatured).sort((a, b) => b.id - a.id).slice(0, 5), [approvedListings]);
 
   const selectedProperty = approvedListings.find((p) => p.id === selectedPropertyId) || null;
 
@@ -5120,7 +5447,7 @@ import.meta.env.PROD ? (
       {page === "home" && (
       <>
       {/* ---------------- HERO ---------------- */}
-      <section ref={heroRef} className="mx-auto max-w-7xl px-4 md:px-8 pt-10 md:pt-16 pb-14 md:pb-20">
+      <section ref={heroRef} className="mx-auto max-w-7xl px-4 md:px-8 pt-6 md:pt-12 pb-12 md:pb-16">
         <div className="pk-hero-grid">
           <div>
             <p className="pk-mono pk-hero-eyebrow pk-primary-text uppercase mb-4">
@@ -5133,68 +5460,65 @@ import.meta.env.PROD ? (
               Search homes, offices and plots in Nakuru — filtered by real budget, not guesswork.
             </p>
           </div>
-          <div className="hidden md:block pk-primary-text opacity-80">
-            <svg viewBox="0 0 320 220" width="100%" aria-hidden="true">
-              <polyline points="0,150 40,150 60,110 90,150 110,80 140,150 170,120 190,150 220,60 250,150 280,150 300,100 320,150"
-                fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" opacity="0.55" />
-              <circle cx="255" cy="42" r="20" fill="var(--accent)" opacity="0.9" />
-              <rect x="30" y="150" width="26" height="34" fill="currentColor" opacity="0.35" />
-              <rect x="95" y="150" width="34" height="42" fill="currentColor" opacity="0.5" />
-              <rect x="200" y="150" width="30" height="30" fill="currentColor" opacity="0.3" />
-            </svg>
-          </div>
+          {heroFeatured.length > 0 ? (
+            <HeroCarousel items={heroFeatured} onOpen={openListing} />
+          ) : (
+            <div className="hidden md:block pk-primary-text opacity-80">
+              <svg viewBox="0 0 320 220" width="100%" aria-hidden="true">
+                <polyline points="0,150 40,150 60,110 90,150 110,80 140,150 170,120 190,150 220,60 250,150 280,150 300,100 320,150"
+                  fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" opacity="0.55" />
+                <circle cx="255" cy="42" r="20" fill="var(--accent)" opacity="0.9" />
+                <rect x="30" y="150" width="26" height="34" fill="currentColor" opacity="0.35" />
+                <rect x="95" y="150" width="34" height="42" fill="currentColor" opacity="0.5" />
+                <rect x="200" y="150" width="30" height="30" fill="currentColor" opacity="0.3" />
+              </svg>
+            </div>
+          )}
         </div>
 
-        {/* Search card */}
-        <div className="pk-search-card mt-10">
-          <div className="pk-tab-row" style={{ scrollbarWidth: "none" }}>
-            {Object.entries(TAB_META).map(([key, meta]) => {
-              const TIcon = meta.icon;
-              return (
-                <button
-                  key={key}
-                  className={`pk-tab ${activeTab === key ? "pk-tab-active" : ""}`}
-                  onClick={() => handleTabChange(key)}
-                >
-                  <TIcon size={15} /> {meta.label}
-                </button>
-              );
-            })}
-          </div>
-          <div className="pk-search-grid">
-            <div className="pk-field">
-              <label htmlFor="pk-location">Location</label>
-              <div className="flex items-center gap-2">
-                <MapPin size={16} className="pk-ink-soft" />
-                <input
-                  aria-label="Search by location" id="pk-location"
-                  type="text"
-                  placeholder="Try Milimani, Section 58, Lanet…"
-                  value={location}
-                  onChange={(e) => setLocation(e.target.value)}
-                />
-              </div>
-            </div>
-            <CustomSelect
-              id="pk-secondary"
-              label={TAB_META[activeTab].secondaryLabel}
-              value={secondary}
-              options={TAB_META[activeTab].secondaryOptions}
-              onChange={setSecondary}
-            />
-            <CustomSelect
-              id="pk-budget"
-              label="Budget"
-              value={budget}
-              options={TAB_META[activeTab].budgetOptions}
-              onChange={setBudget}
-            />
-            <button className="pk-btn-primary justify-center" onClick={() => goToListings(activeTab, { resetFilters: false })}>
-              <Search size={16} /> Search
-            </button>
-          </div>
+        {/* Phone: shortcut icons and one big Search button that opens the search sheet */}
+        <div className="md:hidden">
+          <HeroShortcuts onPick={handleShortcut} />
+          <button type="button" className="pk-hero-search-cta" onClick={() => setSearchSheetOpen(true)}>
+            <Search size={18} /> Search Properties <ArrowRight size={18} />
+          </button>
+        </div>
+
+        {/* Tablet and desktop: slim search card */}
+        <div className="hidden md:block mt-8">
+          <HeroSearch
+            idPrefix="pk"
+            activeTab={activeTab}
+            onTabChange={handleTabChange}
+            location={location}
+            setLocation={setLocation}
+            secondary={secondary}
+            setSecondary={setSecondary}
+            budget={budget}
+            setBudget={setBudget}
+            onSearch={() => goToListings(activeTab, { resetFilters: false })}
+          />
         </div>
       </section>
+
+      <SearchSheet open={searchSheetOpen} onClose={closeSearchSheet}>
+        <HeroSearch
+          idPrefix="pk-sheet"
+          sheet
+          activeTab={activeTab}
+          onTabChange={handleTabChange}
+          location={location}
+          setLocation={setLocation}
+          secondary={secondary}
+          setSecondary={setSecondary}
+          budget={budget}
+          setBudget={setBudget}
+          onSearch={() => {
+            setSearchSheetOpen(false);
+            goToListings(activeTab, { resetFilters: false });
+          }}
+        />
+      </SearchSheet>
 
       {/* ---------------- STATS ---------------- */}
       {approvedListings.length > 0 && (
