@@ -211,7 +211,11 @@ const SESSION_KEY = "hy-realtors:session";
 const SUPERADMIN_CONFIG = {
   salt: "hy-8096ed3a6b8f2ec5dd77e3e9",
   iterations: 150000,
-  emailHashes: ["6297ad52af0e9d46adadfb1ac4eba806b65fce042f8c62624b43c01dc0af0ceb"],
+  emailHashes: [
+    "6297ad52af0e9d46adadfb1ac4eba806b65fce042f8c62624b43c01dc0af0ceb",
+    // haoyangurealtors@gmail.com
+    "c9bc739ae02e9f5829fb06471026cfc34f3d6a2f1b884f95a7b5468283fdca1c",
+  ],
   passHash: "1940d9da546f9b2b13d2ec5fb71775e75cd9ba36ab606d242a1f76037af3a88e",
 };
 const ADMIN_HASH_ITERATIONS = 150000;
