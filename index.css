@@ -872,3 +872,44 @@
         @media (prefers-reduced-motion: reduce) {
           .pk-hc-slide, .pk-hc-badge, .pk-sheet, .pk-sheet-backdrop { transition: none; }
         }
+
+
+        /* ---------- Profile photo ---------- */
+        .pk-avatar-img { border-radius: 999px; object-fit: cover; flex-shrink: 0; display: block; border: 2px solid var(--accent); background: var(--surface-2); }
+        .pk-profile-avatar-wrap { position: relative; flex-shrink: 0; }
+        .pk-profile-avatar-edit {
+          position: absolute; right: -2px; bottom: -2px; width: 28px; height: 28px; border-radius: 999px;
+          display: grid; place-items: center; cursor: pointer; border: 2px solid var(--bg);
+          background: var(--primary); color: var(--primary-ink);
+        }
+        .pk-photo-root { position: fixed; inset: 0; z-index: 90; display: flex; align-items: center; justify-content: center; padding: 16px; }
+        .pk-photo-backdrop { position: absolute; inset: 0; background: rgba(30,29,47,0.62); }
+        .pk-photo-dialog {
+          position: relative; width: 100%; max-width: 400px; max-height: 100%; overflow-y: auto;
+          background: var(--bg); color: var(--ink); border: 1px solid var(--border); border-radius: 24px;
+          padding: 24px 22px 20px; box-shadow: 0 24px 60px var(--shadow); text-align: center; outline: none;
+        }
+        .pk-photo-rules { margin-top: 10px; font-size: 0.74rem; font-weight: 600; letter-spacing: 0.02em; color: var(--accent-text); }
+        .pk-photo-empty {
+          margin: 18px auto 4px; width: 200px; height: 200px; border-radius: 999px; cursor: pointer;
+          display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+          border: 2px dashed var(--accent); background: var(--surface-2); color: var(--primary);
+          font-weight: 600; font-size: 0.9rem; transition: border-color .25s var(--ease), transform .25s var(--ease);
+        }
+        .pk-photo-empty:hover { transform: scale(1.02); border-color: var(--primary); }
+        .pk-photo-crop {
+          position: relative; margin: 18px auto 0; overflow: hidden; border-radius: 16px; background: #000;
+          touch-action: none; cursor: grab; user-select: none; -webkit-user-select: none;
+        }
+        .pk-photo-crop:active { cursor: grabbing; }
+        .pk-photo-crop:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+        .pk-photo-crop img { position: absolute; max-width: none; pointer-events: none; }
+        .pk-photo-circle { position: absolute; inset: 0; border-radius: 50%; box-shadow: 0 0 0 999px rgba(0,0,0,0.55); border: 2px solid rgba(255,255,255,0.9); pointer-events: none; }
+        .pk-photo-zoom { display: block; margin: 14px auto 0; width: 264px; max-width: 100%; }
+        .pk-photo-zoom input { width: 100%; accent-color: var(--accent-text); }
+        .pk-photo-error { margin-top: 14px; font-size: 0.85rem; font-weight: 600; color: var(--brick); }
+        .pk-root[data-theme='dark'] .pk-photo-error { color: var(--accent); }
+        .pk-photo-actions { display: flex; flex-direction: column; gap: 10px; margin-top: 18px; }
+        .pk-photo-actions button { width: 100%; padding-top: 11px; padding-bottom: 11px; }
+        .pk-photo-actions button:disabled { opacity: 0.6; cursor: default; }
+        .pk-photo-logout { margin-top: 14px; background: none; border: none; cursor: pointer; font-size: 0.82rem; font-weight: 600; color: var(--ink-soft); text-decoration: underline; }

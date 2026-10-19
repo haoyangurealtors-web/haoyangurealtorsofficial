@@ -49,6 +49,7 @@ import {
   EyeOff,
   Sparkles,
   Pencil,
+  Camera,
 } from "lucide-react";
 const AdminChart = lazy(() => import("./AdminChart.jsx"));
 
@@ -327,10 +328,21 @@ async function sbRequest(path, { method = "GET", body, token, headers = {} } = {
   return data;
 }
 
+// Profile names: the person's own name when they have one, otherwise the part of their email before the @.
+const emailName = (email) => String(email || "").split("@")[0].trim();
+const PLACEHOLDER_NAMES = new Set(["superadmin", "super admin", "admin", "administrator", "staff", "user", "account"]);
+function displayNameFor(email, ...candidates) {
+  for (const c of candidates) {
+    const n = typeof c === "string" ? c.trim() : "";
+    if (n && !PLACEHOLDER_NAMES.has(n.toLowerCase())) return n;
+  }
+  return emailName(email) || "Account";
+}
+
 function toAccount(user) {
   if (!user) return null;
   const meta = user.user_metadata || {};
-  return { id: user.id, email: user.email, name: meta.full_name || meta.name || String(user.email || "").split("@")[0] };
+  return { id: user.id, email: user.email, name: displayNameFor(user.email, meta.full_name, meta.name), avatar: typeof meta.avatar_url === "string" ? meta.avatar_url : "" };
 }
 function sessionFromResponse(data) {
   return {
@@ -654,14 +666,14 @@ const thumbSrc = (url) =>
     ? url.replace(/\.jpg$/, "-t.jpg")
     : url;
 
-async function putPhoto(base, token, path, blob) {
+async function putPhoto(base, token, path, blob, upsert = false) {
   const res = await fetch(`${base}/storage/v1/object/photos/${path}`, {
     method: "POST",
     headers: {
       apikey: SITE_CONFIG.supabase.anonKey,
       Authorization: "Bearer " + token,
       "Content-Type": blob.type || "image/jpeg",
-      "x-upsert": "false",
+      "x-upsert": upsert ? "true" : "false",
     },
     body: blob,
   });
@@ -685,6 +697,19 @@ async function uploadPhoto(file, folder, maxDim, quality, withThumb = false) {
     }
   }
   return `${base}/storage/v1/object/public/photos/${path}`;
+}
+
+// Profile photos live at photos/avatars/<user id>.jpg and the address is kept on the account itself.
+async function uploadAvatar(blob) {
+  const session = await getValidSession();
+  if (!session || !session.user) throw Object.assign(new Error("Not signed in"), { status: 401 });
+  const base = SITE_CONFIG.supabase.url.replace(/\/$/, "");
+  const path = `avatars/${session.user.id}.jpg`;
+  await putPhoto(base, session.access_token, path, blob, true);
+  const url = `${base}/storage/v1/object/public/photos/${path}?v=${Date.now()}`;
+  await authApi.updateUser(session.access_token, { data: { avatar_url: url } });
+  saveSession({ ...session, user: { ...session.user, avatar: url } });
+  return url;
 }
 
 function friendlySyncError(err) {
@@ -1461,6 +1486,209 @@ function SearchSheet({ open, onClose, children }) {
   );
 }
 
+// ---------- Profile photo: pick, move and zoom inside a circle, then save a 512 x 512 square ----------
+const AVATAR_RULES = { maxBytes: 5 * 1024 * 1024, minPx: 192, outPx: 512, types: ["image/jpeg", "image/png", "image/webp"] };
+const CROP_VIEW = 264;
+
+function ProfilePhotoModal({ account, required, onClose, onSaved, onLogout }) {
+  const dialogRef = useRef(null);
+  const fileRef = useRef(null);
+  const drag = useRef(null);
+  const [img, setImg] = useState(null);
+  const [src, setSrc] = useState("");
+  const [zoom, setZoom] = useState(1);
+  const [center, setCenter] = useState({ x: 0, y: 0 });
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  useDialogFocus(true, dialogRef);
+
+  useEffect(() => {
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const onKey = (e) => e.key === "Escape" && !required && !busy && onClose();
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = previous;
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [required, busy, onClose]);
+
+  useEffect(() => () => src && URL.revokeObjectURL(src), [src]);
+
+  const onPick = (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    setError("");
+    if (!AVATAR_RULES.types.includes(file.type)) {
+      setError("Please choose a JPG, PNG or WebP photo.");
+      return;
+    }
+    if (file.size > AVATAR_RULES.maxBytes) {
+      setError("That file is over 5 MB. Please choose a smaller photo.");
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    const im = new Image();
+    im.onload = () => {
+      if (im.naturalWidth < AVATAR_RULES.minPx || im.naturalHeight < AVATAR_RULES.minPx) {
+        URL.revokeObjectURL(url);
+        setError(`That photo is too small. It needs to be at least ${AVATAR_RULES.minPx} × ${AVATAR_RULES.minPx} pixels.`);
+        return;
+      }
+      setImg(im);
+      setSrc(url);
+      setZoom(1);
+      setCenter({ x: im.naturalWidth / 2, y: im.naturalHeight / 2 });
+    };
+    im.onerror = () => {
+      URL.revokeObjectURL(url);
+      setError("We couldn't open that image. Please try a JPG or PNG.");
+    };
+    im.src = url;
+  };
+
+  const V = CROP_VIEW;
+  const ds = img ? (V / Math.min(img.naturalWidth, img.naturalHeight)) * zoom : 1; // screen pixels per photo pixel
+  const clampCenter = (c) => {
+    const half = V / 2 / ds;
+    return {
+      x: Math.min(Math.max(c.x, half), img.naturalWidth - half),
+      y: Math.min(Math.max(c.y, half), img.naturalHeight - half),
+    };
+  };
+  const cc = img ? clampCenter(center) : center;
+
+  const onPointerDown = (e) => {
+    if (!img) return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    drag.current = { px: e.clientX, py: e.clientY, cx: cc.x, cy: cc.y };
+  };
+  const onPointerMove = (e) => {
+    const d = drag.current;
+    if (!d || !img) return;
+    setCenter(clampCenter({ x: d.cx - (e.clientX - d.px) / ds, y: d.cy - (e.clientY - d.py) / ds }));
+  };
+  const endDrag = () => {
+    drag.current = null;
+  };
+  const onKeyDown = (e) => {
+    if (!img) return;
+    const step = 12 / ds;
+    const move = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] }[e.key];
+    if (!move) return;
+    e.preventDefault();
+    setCenter(clampCenter({ x: cc.x + move[0], y: cc.y + move[1] }));
+  };
+
+  const save = async () => {
+    if (!img || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      const half = V / 2 / ds;
+      const canvas = document.createElement("canvas");
+      canvas.width = AVATAR_RULES.outPx;
+      canvas.height = AVATAR_RULES.outPx;
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, AVATAR_RULES.outPx, AVATAR_RULES.outPx);
+      ctx.imageSmoothingQuality = "high";
+      ctx.drawImage(img, cc.x - half, cc.y - half, half * 2, half * 2, 0, 0, AVATAR_RULES.outPx, AVATAR_RULES.outPx);
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.88));
+      if (!blob) throw new Error("Could not process the photo");
+      const url = await uploadAvatar(blob);
+      onSaved(url);
+    } catch (err) {
+      setError(err instanceof TypeError ? friendlySyncError(err) : "We couldn't save your photo just now. Please try again, and contact us if it keeps happening.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="pk-photo-root">
+      <div className="pk-photo-backdrop" onClick={required || busy ? undefined : onClose} />
+      <div ref={dialogRef} className="pk-photo-dialog" role="dialog" aria-modal="true" aria-labelledby="pk-photo-title" tabIndex={-1}>
+        <h2 id="pk-photo-title" className="pk-display text-xl md:text-2xl font-semibold">
+          {required ? "Add your profile photo" : "Change your photo"}
+        </h2>
+        <p className="pk-ink-soft text-sm mt-1">
+          {required
+            ? `One last step, ${account.name}. Pick a clear photo of yourself. You can move and zoom it to fit the circle.`
+            : "Pick a new photo, then move and zoom it to fit the circle."}
+        </p>
+        <p className="pk-photo-rules">JPG, PNG or WebP · max 5 MB · min 192 × 192 px</p>
+
+        <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp" className="sr-only" tabIndex={-1} onChange={onPick} aria-label="Choose a profile photo" />
+
+        {!img ? (
+          <button type="button" className="pk-photo-empty" onClick={() => fileRef.current && fileRef.current.click()}>
+            <Camera size={30} strokeWidth={1.6} />
+            <span>Choose photo</span>
+          </button>
+        ) : (
+          <>
+            <div
+              className="pk-photo-crop"
+              style={{ width: V, height: V }}
+              tabIndex={0}
+              role="application"
+              aria-label="Photo crop area. Drag, or use the arrow keys, to move the photo."
+              onPointerDown={onPointerDown}
+              onPointerMove={onPointerMove}
+              onPointerUp={endDrag}
+              onPointerCancel={endDrag}
+              onKeyDown={onKeyDown}
+            >
+              <img
+                src={src}
+                alt=""
+                draggable={false}
+                style={{ width: img.naturalWidth * ds, height: img.naturalHeight * ds, left: V / 2 - cc.x * ds, top: V / 2 - cc.y * ds }}
+              />
+              <span className="pk-photo-circle" aria-hidden="true" />
+            </div>
+            <label className="pk-photo-zoom">
+              <span className="sr-only">Zoom</span>
+              <input type="range" min="1" max="3" step="0.01" value={zoom} onChange={(e) => setZoom(Number(e.target.value))} aria-label="Zoom" />
+            </label>
+          </>
+        )}
+
+        {error && (
+          <p role="alert" className="pk-photo-error">
+            {error}
+          </p>
+        )}
+
+        <div className="pk-photo-actions">
+          {img && (
+            <>
+              <button type="button" className="pk-btn-primary justify-center" onClick={save} disabled={busy}>
+                {busy ? "Saving…" : "Save photo"}
+              </button>
+              <button type="button" className="pk-btn-outline justify-center" onClick={() => fileRef.current && fileRef.current.click()} disabled={busy}>
+                Choose a different photo
+              </button>
+            </>
+          )}
+          {!required && (
+            <button type="button" className="pk-btn-outline justify-center" onClick={onClose} disabled={busy}>
+              Cancel
+            </button>
+          )}
+        </div>
+        {required && (
+          <button type="button" className="pk-photo-logout" onClick={onLogout} disabled={busy}>
+            Not now? Log out
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 const LOADING_ITEMS = [
   { icon: HomeIcon, label: "Buy" },
   { icon: KeyRound, label: "Rent" },
@@ -1513,17 +1741,31 @@ function LoadingScreen({ fadingOut }) {
 }
 
 function InitialsAvatar({ name, size = 48 }) {
-  const initials = name
-    .split(" ")
-    .map((n) => n[0])
-    .slice(0, 2)
-    .join("")
-    .toUpperCase();
+  const initials =
+    String(name || "")
+      .split(/[\s._-]+/)
+      .filter(Boolean)
+      .map((n) => n[0])
+      .slice(0, 2)
+      .join("")
+      .toUpperCase() || "?";
   return (
     <div className="pk-initials-avatar" style={{ width: size, height: size, fontSize: size * 0.36 }}>
       {initials}
     </div>
   );
+}
+
+// Shows the profile photo when there is one, otherwise the initials.
+function Avatar({ name, src, size = 48 }) {
+  const [bad, setBad] = useState(false);
+  useEffect(() => {
+    setBad(false);
+  }, [src]);
+  if (src && !bad && /^https:\/\//i.test(src)) {
+    return <img className="pk-avatar-img" src={src} alt="" width={size} height={size} style={{ width: size, height: size }} onError={() => setBad(true)} />;
+  }
+  return <InitialsAvatar name={name} size={size} />;
 }
 
 function PropertyDetailPage({
@@ -1735,7 +1977,7 @@ function AgentContactModal({ open, onClose }) {
   );
 }
 
-function ProfilePage({ currentUser, onUpdateUser, favorites, listings, onToggleFavorite, onSelectProperty, onBackHome, onLogout, onGoAdmin, onOpenModal, securitySlot }) {
+function ProfilePage({ currentUser, onUpdateUser, onChangePhoto, favorites, listings, onToggleFavorite, onSelectProperty, onBackHome, onLogout, onGoAdmin, onOpenModal, securitySlot }) {
   const [editing, setEditing] = useState(false);
   const [nameDraft, setNameDraft] = useState(currentUser?.name || "");
 
@@ -1780,8 +2022,8 @@ function ProfilePage({ currentUser, onUpdateUser, favorites, listings, onToggleF
 
   const handleSaveName = (e) => {
     e.preventDefault();
-    if (!nameDraft.trim()) return;
-    onUpdateUser({ ...currentUser, name: nameDraft.trim() });
+    // An empty name falls back to the part of the email before the @.
+    onUpdateUser({ ...currentUser, name: displayNameFor(currentUser.email, nameDraft) });
     setEditing(false);
   };
 
@@ -1793,7 +2035,14 @@ function ProfilePage({ currentUser, onUpdateUser, favorites, listings, onToggleF
       </p>
 
       <div className="pk-profile-header">
-        <InitialsAvatar name={currentUser.name} size={72} />
+        <div className="pk-profile-avatar-wrap">
+          <Avatar name={currentUser.name} src={currentUser.avatar} size={72} />
+          {onChangePhoto && (
+            <button type="button" className="pk-profile-avatar-edit" aria-label="Change profile photo" onClick={onChangePhoto}>
+              <Camera size={13} />
+            </button>
+          )}
+        </div>
         <div className="flex-1 min-w-0">
           {editing ? (
             <form onSubmit={handleSaveName} className="flex items-center gap-2 flex-wrap">
@@ -2769,14 +3018,14 @@ function StaffGate({ admins, onAuthenticate, onExit }) {
       if (SUPERADMIN_CONFIG.emailHashes.includes(emailHash)) {
         const attempt = await pbkdf2Hex(password, SUPERADMIN_CONFIG.salt, SUPERADMIN_CONFIG.iterations);
         if (attempt === SUPERADMIN_CONFIG.passHash) {
-          user = { name: "Superadmin", email: normalized, isSuperAdmin: true, role: "superadmin" };
+          user = { name: displayNameFor(normalized), email: normalized, isSuperAdmin: true, role: "superadmin" };
         }
       } else {
         const admin = admins.find((a) => a.email.toLowerCase() === normalized);
         // Always do the same amount of work so response time doesn't reveal which emails exist.
         const attempt = await pbkdf2Hex(password, admin?.passSalt || SUPERADMIN_CONFIG.salt, ADMIN_HASH_ITERATIONS);
         if (admin && admin.status === "active" && admin.passHash && attempt === admin.passHash) {
-          user = { name: admin.name, email: normalized, isSuperAdmin: false, role: "admin", agency: admin.agency, adminId: admin.id };
+          user = { name: displayNameFor(normalized, admin.name), email: normalized, isSuperAdmin: false, role: "admin", agency: admin.agency, adminId: admin.id };
         }
       }
       if (user) {
@@ -3263,7 +3512,7 @@ function AdminListingsPanel({ listings, onUpdateListings, onToast }) {
       agency: null,
       status: "approved",
       source: "admin",
-      submittedBy: "Superadmin",
+      submittedBy: adminName || "Superadmin",
     };
     onUpdateListings([...listings, newListing]);
     onToast?.(`"${newListing.title}" published`, "success");
@@ -4174,7 +4423,7 @@ function AgencyAdminConsole({ theme, setTheme, onExit, currentAdmin, listings, o
   );
 }
 
-function AdminConsole({ theme, setTheme, onExit, listings, onUpdateListings, agents, onUpdateAgents, admins, onUpdateAdmins }) {
+function AdminConsole({ theme, setTheme, onExit, adminName, listings, onUpdateListings, agents, onUpdateAgents, admins, onUpdateAdmins }) {
   const [tab, setTab] = useState("overview");
   const [stats, setStats] = useState(null);
   const [toasts, setToasts] = useState([]);
@@ -4333,6 +4582,7 @@ export default function App() {
   const statsFlushScheduled = useRef(false);
 
   const [searchSheetOpen, setSearchSheetOpen] = useState(false);
+  const [photoModalOpen, setPhotoModalOpen] = useState(false);
   const heroRef = useRef(null);
   const featuredRef = useRef(null);
   const agentsRef = useRef(null);
@@ -5039,7 +5289,8 @@ export default function App() {
         }
         const isSuper = profile.role === "superadmin";
         setCurrentUser({
-          name: profile.name || account.name,
+          name: displayNameFor(account.email, profile.name, account.name),
+          avatar: account.avatar || "",
           email: account.email,
           isSuperAdmin: isSuper,
           role: isSuper ? "superadmin" : "admin",
@@ -5153,6 +5404,12 @@ export default function App() {
     if (session) authApi.signOut(session.access_token);
   };
 
+  const handlePhotoSaved = (url) => {
+    setAccount((a) => (a ? { ...a, avatar: url } : a));
+    setCurrentUser((u) => (u ? { ...u, avatar: url } : u));
+    setPhotoModalOpen(false);
+  };
+
   const updateAccountName = async (user) => {
     setAccount((a) => (a ? { ...a, name: user.name } : a));
     const session = await getValidSession();
@@ -5205,6 +5462,7 @@ export default function App() {
           <AdminConsole
             theme={theme}
             setTheme={setTheme}
+            adminName={currentUser?.name}
             onExit={goHome}
             listings={listings}
             onUpdateListings={updateListings}
@@ -5310,7 +5568,7 @@ import.meta.env.PROD ? (
                   </button>
                 )}
                 <button className="pk-user-chip" title={currentUser.email} onClick={goToProfile}>
-                  <InitialsAvatar name={currentUser.name} size={30} />
+                  <Avatar name={currentUser.name} src={currentUser.avatar} size={30} />
                   <span>{currentUser.name}</span>
                 </button>
                 <button className="pk-icon-btn" aria-label="Log out" onClick={handleLogout}>
@@ -5323,7 +5581,7 @@ import.meta.env.PROD ? (
                   <Heart size={15} /> <span className="hidden xl:inline">Saved</span>{favorites.size > 0 ? ` (${favorites.size})` : ""}
                 </button>
                 <button className="pk-user-chip" title={account.email} onClick={goToProfile}>
-                  <InitialsAvatar name={account.name} size={30} />
+                  <Avatar name={account.name} src={account.avatar} size={30} />
                   <span>{account.name}</span>
                 </button>
                 <button className="pk-icon-btn" aria-label="Log out" onClick={handleAccountLogout}>
@@ -5380,7 +5638,7 @@ import.meta.env.PROD ? (
         {(currentUser || account) && (
           <div className="px-6 pt-2 pb-1">
             <button className="pk-drawer-profile" title={(currentUser || account).email} onClick={goToProfile}>
-              <InitialsAvatar name={(currentUser || account).name} size={34} />
+              <Avatar name={(currentUser || account).name} src={(currentUser || account).avatar} size={34} />
               <span className="flex-1 truncate">{(currentUser || account).name}</span>
               <ChevronRight size={16} className="pk-ink-soft" />
             </button>
@@ -5814,6 +6072,7 @@ import.meta.env.PROD ? (
       {page === "profile" && (
         <ProfilePage
           currentUser={currentUser || account}
+          onChangePhoto={AUTH_ENABLED && account ? () => setPhotoModalOpen(true) : undefined}
           onUpdateUser={(u) => {
             if (REMOTE || !currentUser) updateAccountName(u);
             if (currentUser) setCurrentUser(u);
@@ -5902,6 +6161,17 @@ import.meta.env.PROD ? (
           </div>
         </div>
       </footer>
+
+      {/* ---------------- PROFILE PHOTO (required after sign-up) ---------------- */}
+      {AUTH_ENABLED && authChecked && account && ((!account.avatar && !authOpen) || photoModalOpen) && (
+        <ProfilePhotoModal
+          account={account}
+          required={!account.avatar}
+          onClose={() => setPhotoModalOpen(false)}
+          onSaved={handlePhotoSaved}
+          onLogout={currentUser ? handleLogout : handleAccountLogout}
+        />
+      )}
 
       {/* ---------------- ACCOUNT MODAL ---------------- */}
       {AUTH_ENABLED && (
