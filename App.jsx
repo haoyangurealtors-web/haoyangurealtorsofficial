@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo, lazy, Suspense } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import LOGO_IMAGE_SRC from "./logo.webp";
 import LOGO_IMAGE_SRC_DARK from "./logo-dark.webp";
 import {
@@ -51,7 +51,7 @@ import {
   Pencil,
   Camera,
 } from "lucide-react";
-const AdminChart = lazy(() => import("./AdminChart.jsx"));
+import AdminOverview from "./AdminOverview.jsx";
 
 // Brand glyphs that the icon library doesn't include.
 function XIcon({ size = 16 }) {
@@ -1011,43 +1011,6 @@ function useCountUp(target, duration = 1500) {
   }, [started, target, duration]);
 
   return [value, nodeRef];
-}
-
-function useLiveCounter(target, duration = 800) {
-  const [display, setDisplay] = useState(target);
-  const prevRef = useRef(target);
-  const firstRef = useRef(true);
-
-  useEffect(() => {
-    const from = firstRef.current ? 0 : prevRef.current;
-    const to = target;
-    firstRef.current = false;
-    prevRef.current = target;
-
-    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-    if (from === to || reduceMotion) {
-      setDisplay(to);
-      return;
-    }
-
-    let raf;
-    const startTime = performance.now();
-    const tick = (now) => {
-      const progress = Math.min((now - startTime) / duration, 1);
-      const eased = 1 - Math.pow(1 - progress, 3);
-      setDisplay(Math.round(from + (to - from) * eased));
-      if (progress < 1) raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [target, duration]);
-
-  return display;
-}
-
-function AdminStatCounter({ value }) {
-  const display = useLiveCounter(value);
-  return <div className="pk-mono pk-primary-text pk-admin-stat-value">{display.toLocaleString()}</div>;
 }
 
 function StatItem({ stat }) {
@@ -3087,64 +3050,6 @@ function StaffGate({ admins, onAuthenticate, onExit }) {
   );
 }
 
-function AdminOverview({ listings, agents, admins, stats }) {
-  const hour = new Date().getHours();
-  const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
-  const todayLabel = new Date().toLocaleDateString("en-KE", { weekday: "long", month: "long", day: "numeric" });
-
-  const categoryData = [
-    { name: "Buy", views: stats?.buyViews || 0 },
-    { name: "Rent", views: stats?.rentViews || 0 },
-    { name: "Commercial", views: stats?.commercialViews || 0 },
-    { name: "Land", views: stats?.landViews || 0 },
-  ];
-
-  const statCards = [
-    { label: "Live listings", value: listings.filter((l) => l.status === "approved").length },
-    { label: "Pending review", value: listings.filter((l) => l.status === "pending").length },
-    { label: "Active agents", value: agents.filter((a) => a.status !== "banned").length },
-    { label: "Admin accounts", value: admins.length },
-    { label: "Page views", value: stats?.pageViews || 0 },
-    { label: "Searches run", value: stats?.searches || 0 },
-    { label: "Property views", value: stats?.propertyDetailViews || 0 },
-    { label: "Listings saved", value: stats?.favorites || 0 },
-  ];
-
-  return (
-    <div>
-      <div className="flex items-center justify-between flex-wrap gap-3 mb-1">
-        <h2 className="pk-display text-2xl font-semibold flex items-center gap-2">
-          {greeting}, Superadmin <Sparkles size={17} className="pk-accent-text" />
-        </h2>
-        <span className="pk-live-badge">
-          <span className="pk-live-dot" /> Live
-        </span>
-      </div>
-      <p className="pk-ink-soft text-sm mb-2">{todayLabel} · counts reflect real visits to this site.</p>
-
-      <div className="pk-admin-stat-grid">
-        {statCards.map((s) => (
-          <div key={s.label} className="pk-admin-stat-card">
-            <AdminStatCounter value={s.value} />
-            <div className="pk-ink-soft text-xs mt-1">{s.label}</div>
-          </div>
-        ))}
-      </div>
-
-      <div className="pk-admin-chart-card">
-        <h3 className="font-semibold mb-4">Category interest (page views)</h3>
-        <Suspense fallback={<p className="pk-ink-soft text-sm">Loading chart…</p>}>
-          <AdminChart data={categoryData} />
-        </Suspense>
-      </div>
-
-      <p className="pk-ink-soft text-xs mt-4">
-        Counts are aggregated from real visits to this site and refresh every few seconds while this tab is open.
-      </p>
-    </div>
-  );
-}
-
 const EMPTY_LISTING_FORM = {
   title: "",
   tag: "Buy",
@@ -3463,9 +3368,9 @@ function ListingExpandDetails({ listing }) {
   );
 }
 
-function AdminListingsPanel({ listings, onUpdateListings, onToast }) {
+function AdminListingsPanel({ listings, onUpdateListings, onToast, adminName, openForm = false }) {
   const [filter, setFilter] = useState("all");
-  const [showForm, setShowForm] = useState(false);
+  const [showForm, setShowForm] = useState(Boolean(openForm));
   const [expandedIds, setExpandedIds] = useState(new Set());
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [featureFor, setFeatureFor] = useState(null);
@@ -4429,7 +4334,9 @@ function AgencyAdminConsole({ theme, setTheme, onExit, currentAdmin, listings, o
 
 function AdminConsole({ theme, setTheme, onExit, adminName, listings, onUpdateListings, agents, onUpdateAgents, admins, onUpdateAdmins }) {
   const [tab, setTab] = useState("overview");
+  const [tabIntent, setTabIntent] = useState(null);
   const [stats, setStats] = useState(null);
+  const [lastUpdated, setLastUpdated] = useState(null);
   const [toasts, setToasts] = useState([]);
   const toastIdRef = useRef(0);
 
@@ -4450,11 +4357,17 @@ function AdminConsole({ theme, setTheme, onExit, adminName, listings, onUpdateLi
           const session = await getValidSession();
           if (!session) return;
           const rows = await sbRequest("/rest/v1/usage_events?select=key,count", { token: session.access_token });
-          if (!cancelled) setStats(Object.fromEntries((rows || []).map((r) => [r.key, Number(r.count)])));
+          if (!cancelled) {
+            setStats(Object.fromEntries((rows || []).map((r) => [r.key, Number(r.count)])));
+            setLastUpdated(Date.now());
+          }
           return;
         }
         const res = await window.storage.get(STORAGE_KEYS.stats, true);
-        if (!cancelled && res && res.value) setStats(JSON.parse(res.value));
+        if (!cancelled && res && res.value) {
+          setStats(JSON.parse(res.value));
+          setLastUpdated(Date.now());
+        }
       } catch (e) {
         /* no stats saved yet */
       }
@@ -4467,12 +4380,21 @@ function AdminConsole({ theme, setTheme, onExit, adminName, listings, onUpdateLi
     };
   }, []);
 
+  const pendingListings = listings.filter((l) => l.status === "pending").length;
+  const unverifiedAgents = agents.filter((a) => a.status !== "verified" && a.status !== "banned").length;
   const TABS = [
     { key: "overview", label: "Overview", icon: LayoutDashboard },
-    { key: "listings", label: "Listings", icon: ClipboardList },
-    { key: "admins", label: "Admins", icon: UserCog },
-    { key: "agents", label: "Agents", icon: BadgeCheck },
+    { key: "listings", label: "Listings", icon: ClipboardList, badge: pendingListings, attention: pendingListings > 0 },
+    { key: "admins", label: "Admins", icon: UserCog, badge: admins.length },
+    { key: "agents", label: "Agents", icon: BadgeCheck, badge: unverifiedAgents, attention: unverifiedAgents > 0 },
   ];
+  const activeTab = TABS.find((t) => t.key === tab) || TABS[0];
+  const navigate = (key, intent = null) => {
+    setTabIntent(intent);
+    setTab(key);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+  const initial = (adminName || "S").trim().charAt(0).toUpperCase();
 
   return (
     <div className="pk-admin-shell">
@@ -4480,6 +4402,9 @@ function AdminConsole({ theme, setTheme, onExit, adminName, listings, onUpdateLi
         <div className="flex items-center gap-3">
           <LogoMark size={30} />
           <span className="pk-display font-semibold">Hao yangu realtors admin</span>
+        </div>
+        <div className="pk-admin-crumb" aria-hidden="true">
+          Superadmin <ChevronRight size={14} /> <strong>{activeTab.label}</strong>
         </div>
         <div className="flex items-center gap-2">
           <button className="pk-icon-btn" aria-label="Toggle theme" onClick={() => setTheme((t) => (t === "light" ? "dark" : "light"))}>
@@ -4491,20 +4416,46 @@ function AdminConsole({ theme, setTheme, onExit, adminName, listings, onUpdateLi
         </div>
       </div>
       <div className="pk-admin-body">
-        <nav className="pk-admin-sidebar">
+        <nav className="pk-admin-sidebar" aria-label="Admin sections">
+          <div className="pk-admin-nav-label">Workspace</div>
           {TABS.map((t) => {
             const TIcon = t.icon;
             return (
-              <button key={t.key} className={`pk-admin-nav-item ${tab === t.key ? "pk-admin-nav-active" : ""}`} onClick={() => setTab(t.key)}>
+              <button
+                key={t.key}
+                className={`pk-admin-nav-item ${tab === t.key ? "pk-admin-nav-active" : ""}`}
+                onClick={() => navigate(t.key)}
+                aria-current={tab === t.key ? "page" : undefined}
+              >
                 <TIcon size={16} /> {t.label}
+                {t.badge > 0 && <span className={`pk-admin-nav-badge ${t.attention && tab !== t.key ? "pk-admin-nav-attn" : ""}`}>{t.badge}</span>}
               </button>
             );
           })}
+          <div className="pk-admin-user">
+            <span className="pk-admin-user-avatar" aria-hidden="true">{initial}</span>
+            <span className="pk-admin-user-text">
+              <strong>{adminName || "Superadmin"}</strong>
+              <span>Superadmin</span>
+            </span>
+          </div>
         </nav>
         <main className="pk-admin-main">
           <div key={tab} className="pk-admin-tab-content">
-            {tab === "overview" && <AdminOverview listings={listings} agents={agents} admins={admins} stats={stats} />}
-            {tab === "listings" && <AdminListingsPanel listings={listings} onUpdateListings={onUpdateListings} onToast={showToast} />}
+            {tab === "overview" && (
+              <AdminOverview
+                listings={listings}
+                agents={agents}
+                admins={admins}
+                stats={stats}
+                lastUpdated={lastUpdated}
+                adminName={adminName}
+                onNavigate={navigate}
+                onUpdateListings={onUpdateListings}
+                onToast={showToast}
+              />
+            )}
+            {tab === "listings" && <AdminListingsPanel listings={listings} onUpdateListings={onUpdateListings} onToast={showToast} adminName={adminName} openForm={Boolean(tabIntent && tabIntent.openForm)} />}
             {tab === "admins" && (
               <AdminAdminsPanel admins={admins} onUpdateAdmins={onUpdateAdmins} onToast={showToast} listings={listings} agents={agents} />
             )}

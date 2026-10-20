@@ -23,7 +23,7 @@ You need Node.js 18 or newer (nodejs.org, the LTS version) and Git.
 Every time you push to GitHub, Cloudflare rebuilds and publishes the site in about a minute.
 
 ## What is in this folder
-- App.jsx, AdminChart.jsx, main.jsx, index.css: the website
+- App.jsx, AdminOverview.jsx, AdminChart.jsx, main.jsx, index.css: the website (AdminOverview.jsx is the super admin dashboard home)
 - supabase-account-wall.sql: the database rule behind the sign-up wall
 - supabase-profile-photos.sql: lets each person save their own profile photo
 - supabase-add-superadmin.sql: makes an email a super admin (and shows the super admin count)
