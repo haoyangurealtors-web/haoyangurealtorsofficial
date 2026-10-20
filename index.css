@@ -1055,3 +1055,8 @@
 .pk-ov-admin-text { flex: 1; }
 .pk-ov-avatar { width: 32px; height: 32px; border-radius: 999px; flex-shrink: 0; display: grid; place-items: center; background: var(--surface-2); color: var(--primary); font-weight: 700; font-size: 0.85rem; }
 .pk-ov-foot { font-size: 0.75rem; color: var(--ink-soft); }
+
+
+        /* Page colour behind the app, so a refresh never flashes white (the saved theme is applied by theme-init.js) */
+        html { background-color: #FAEEEE; }
+        html[data-theme='dark'] { background-color: #1E1D2F; color-scheme: dark; }

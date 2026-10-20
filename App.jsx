@@ -222,6 +222,26 @@ const ADMIN_HASH_ITERATIONS = 150000;
 const MAX_LOGIN_ATTEMPTS = 5;
 const LOCKOUT_MS = 5 * 60 * 1000;
 
+// The chosen look (light or dark) is remembered on this device between visits and refreshes.
+const THEME_KEY = "hy-realtors:theme";
+function readStoredTheme() {
+  try {
+    const t = window.localStorage.getItem(THEME_KEY);
+    return t === "dark" ? "dark" : "light";
+  } catch (e) {
+    return "light";
+  }
+}
+// Show the animated welcome screen in full once per browser session; after a refresh it is much shorter.
+const SPLASH_KEY = "hy-realtors:splash-seen";
+function splashSeen() {
+  try {
+    return window.sessionStorage.getItem(SPLASH_KEY) === "1";
+  } catch (e) {
+    return false;
+  }
+}
+
 const STORAGE_KEYS = {
   listings: "hy-realtors:listings",
   agents: "hy-realtors:agents",
@@ -4473,7 +4493,7 @@ function AdminConsole({ theme, setTheme, onExit, adminName, listings, onUpdateLi
 /* ---------------------------------------------------------------- */
 
 export default function App() {
-  const [theme, setTheme] = useState("light");
+  const [theme, setTheme] = useState(readStoredTheme);
   const [appLoading, setAppLoading] = useState(true);
   const [showLoader, setShowLoader] = useState(true);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -4543,10 +4563,48 @@ export default function App() {
   const agentsRef = useRef(null);
   const ctaRef = useRef(null);
 
+  // Remember the theme, and keep the page background and phone address-bar colour in step with it.
   useEffect(() => {
-    const hide = setTimeout(() => setAppLoading(false), 900);
-    return () => clearTimeout(hide);
+    try {
+      window.localStorage.setItem(THEME_KEY, theme);
+    } catch (e) {
+      /* private browsing: the choice just lasts for this visit */
+    }
+    document.documentElement.setAttribute("data-theme", theme);
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute("content", theme === "dark" ? "#1E1D2F" : "#FAEEEE");
+  }, [theme]);
+  // If the theme is changed in another tab, follow it.
+  useEffect(() => {
+    const onStorage = (e) => {
+      if (e.key === THEME_KEY && (e.newValue === "dark" || e.newValue === "light")) setTheme(e.newValue);
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
   }, []);
+
+  // The welcome screen stays until the listings and the sign-in check have finished (with a time limit),
+  // so a refresh never flashes "0 properties found" or a logged-out header first.
+  const [splashMinDone, setSplashMinDone] = useState(false);
+  const [splashCapped, setSplashCapped] = useState(false);
+  useEffect(() => {
+    const min = setTimeout(() => setSplashMinDone(true), splashSeen() ? 250 : 900);
+    const cap = setTimeout(() => setSplashCapped(true), 6000);
+    return () => {
+      clearTimeout(min);
+      clearTimeout(cap);
+    };
+  }, []);
+  useEffect(() => {
+    if (splashMinDone && ((dataReady && (authChecked || !AUTH_ENABLED)) || splashCapped)) {
+      setAppLoading(false);
+      try {
+        window.sessionStorage.setItem(SPLASH_KEY, "1");
+      } catch (e) {
+        /* ignore */
+      }
+    }
+  }, [splashMinDone, splashCapped, dataReady, authChecked]);
 
   useEffect(() => {
     if (!appLoading) {
@@ -4945,7 +5003,20 @@ export default function App() {
     if (page === "admin") return "/admin";
     return "/";
   };
-  const applyPath = (path) => {
+  // Search filters live in the address (?q=…&s=…&b=…&o=…) so a refresh or a shared link keeps them.
+  const applyFiltersFromSearch = (category, search) => {
+    const sp = new URLSearchParams(search || "");
+    const meta = category === "all" ? { secondaryOptions: [], budgetOptions: TAB_META.buy.budgetOptions } : TAB_META[category];
+    const q = sp.get("q");
+    if (q) setLocation(q.slice(0, 80));
+    const sec = sp.get("s");
+    if (sec && meta.secondaryOptions.includes(sec)) setSecondary(sec);
+    const bud = sp.get("b");
+    if (bud && meta.budgetOptions.includes(bud)) setBudget(bud);
+    const ord = sp.get("o");
+    if (ord && SORT_OPTIONS.includes(ord)) setSortBy(ord);
+  };
+  const applyPath = (path, search = "") => {
     const clean = path.replace(/\/+$/, "") || "/";
     const detail = clean.match(/^\/listing\/(\d+)$/);
     if (detail) {
@@ -4968,10 +5039,12 @@ export default function App() {
     } else if (clean === "/listings") {
       switchListingCategory("all");
       setLocation("");
+      applyFiltersFromSearch("all", search);
       setPage("listings");
     } else if (["/buy", "/rent", "/commercial", "/land"].includes(clean)) {
       switchListingCategory(clean.slice(1));
       setLocation("");
+      applyFiltersFromSearch(clean.slice(1), search);
       setPage("listings");
     } else {
       setPage("home");
@@ -4979,9 +5052,9 @@ export default function App() {
     setScrollTarget("top");
   };
   useEffect(() => {
-    applyPath(window.location.pathname);
+    applyPath(window.location.pathname, window.location.search);
     setRouterReady(true);
-    const onPop = () => applyPath(window.location.pathname);
+    const onPop = () => applyPath(window.location.pathname, window.location.search);
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -4997,12 +5070,33 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, selectedPropertyId, listingCategory]);
 
+  const firstAddressSync = useRef(true);
   useEffect(() => {
     if (!routerReady) return;
     const path = pathForState();
-    if (window.location.pathname !== path) window.history.pushState(null, "", path);
+    if (window.location.pathname !== path) {
+      // A mistyped or old address is tidied in place, so Back doesn't land on it again.
+      if (firstAddressSync.current) window.history.replaceState(null, "", path);
+      else window.history.pushState(null, "", path);
+    }
+    firstAddressSync.current = false;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [routerReady, page, listingCategory, selectedPropertyId]);
+
+  // Keep the search filters in the address while on a listings page.
+  useEffect(() => {
+    if (!routerReady || page !== "listings" || window.location.pathname !== pathForState()) return;
+    const meta = listingCategory === "all" ? { secondaryOptions: [], budgetOptions: TAB_META.buy.budgetOptions } : TAB_META[listingCategory];
+    const sp = new URLSearchParams();
+    if (location.trim()) sp.set("q", location.trim());
+    if (meta.secondaryOptions.length && secondary !== meta.secondaryOptions[0]) sp.set("s", secondary);
+    if (budget !== meta.budgetOptions[0]) sp.set("b", budget);
+    if (sortBy !== SORT_OPTIONS[0]) sp.set("o", sortBy);
+    const qs = sp.toString();
+    const want = qs ? `?${qs}` : "";
+    if (window.location.search !== want) window.history.replaceState(null, "", window.location.pathname + want);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routerReady, page, listingCategory, location, secondary, budget, sortBy]);
 
   const handleTabChange = (key) => {
     setActiveTab(key);
