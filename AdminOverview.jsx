@@ -131,7 +131,7 @@ function StatusPill({ status }) {
 /* Overview                                                            */
 /* ------------------------------------------------------------------ */
 
-export default function AdminOverview({ listings, agents, admins, stats, lastUpdated, adminName, onNavigate, onUpdateListings, onToast }) {
+export default function AdminOverview({ listings, agents, agencies, stats, lastUpdated, adminName, onNavigate, onUpdateListings, onToast }) {
   const now = useNow();
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
@@ -211,8 +211,8 @@ export default function AdminOverview({ listings, agents, admins, stats, lastUpd
         <button type="button" className="pk-btn-primary pk-ov-action" onClick={() => onNavigate("listings", { openForm: true })}>
           <Plus size={15} /> New listing
         </button>
-        <button type="button" className="pk-btn-outline pk-ov-action" onClick={() => onNavigate("admins")}>
-          <UserCog size={15} /> Add admin
+        <button type="button" className="pk-btn-outline pk-ov-action" onClick={() => onNavigate("agencies")}>
+          <UserCog size={15} /> Add agency
         </button>
         <button type="button" className="pk-btn-outline pk-ov-action" onClick={() => onNavigate("agents")}>
           <BadgeCheck size={15} /> Manage agents
@@ -418,11 +418,11 @@ export default function AdminOverview({ listings, agents, admins, stats, lastUpd
           )}
         </Card>
 
-        <Card title="Team" hint="Admins and agents on the platform">
+        <Card title="Team" hint="Agencies and agents on the platform">
           <div className="pk-ov-team">
-            <button type="button" className="pk-ov-team-stat" onClick={() => onNavigate("admins")}>
-              <strong className="pk-mono">{admins.length}</strong>
-              <span>Agency admins</span>
+            <button type="button" className="pk-ov-team-stat" onClick={() => onNavigate("agencies")}>
+              <strong className="pk-mono">{agencies.length}</strong>
+              <span>Agencies</span>
             </button>
             <button type="button" className="pk-ov-team-stat" onClick={() => onNavigate("agents")}>
               <strong className="pk-mono">{data.verified.length}</strong>
@@ -437,9 +437,9 @@ export default function AdminOverview({ listings, agents, admins, stats, lastUpd
               <span>Banned</span>
             </button>
           </div>
-          {admins.length > 0 && (
+          {agencies.length > 0 && (
             <ul className="pk-ov-admins">
-              {admins.slice(0, 4).map((a) => (
+              {agencies.slice(0, 4).map((a) => (
                 <li key={a.id}>
                   <span className="pk-ov-avatar" aria-hidden="true">
                     {(a.name || a.email || "?").trim().charAt(0).toUpperCase()}

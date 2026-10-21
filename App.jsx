@@ -246,7 +246,7 @@ function splashSeen() {
 const STORAGE_KEYS = {
   listings: "hy-realtors:listings",
   agents: "hy-realtors:agents",
-  admins: "hy-realtors:admins",
+  agencies: "hy-realtors:admins", // same stored key as before, so nothing saved in a browser is lost
   stats: "hy-realtors:usage-stats",
   favorites: "hy-realtors:favorites",
 };
@@ -590,9 +590,27 @@ function staffFromRow(r) {
     createdAt: String(r.created_at || "").slice(0, 10),
   };
 }
+// An agency is a "staff" row with the database role "admin". The database value stays "admin" so existing
+// rules keep working; everything the person sees (and the role name used in this file) says "agency".
 function staffToRow(a) {
   return { email: String(a.email).toLowerCase(), name: a.name, agency: a.agency, status: a.status, role: "admin" };
 }
+// An agent login lets one agent sign in to add and remove their own listings. It lives in its own table
+// (agent_logins, see supabase-agents-and-agencies.sql) and is matched to the agent by agency + name.
+function agentLoginFromRow(r) {
+  return {
+    id: Number(r.id),
+    email: r.email,
+    agentName: r.agent_name,
+    agency: r.agency || "",
+    status: r.status,
+  };
+}
+function agentLoginToRow(a) {
+  return { email: String(a.email).toLowerCase(), agent_name: a.agentName, agency: a.agency, status: a.status };
+}
+const isStaffUser = (u) => Boolean(u) && (u.isSuperAdmin || u.role === "superadmin" || u.role === "agency" || u.role === "agent");
+const sameText = (a, b) => String(a || "").trim().toLowerCase() === String(b || "").trim().toLowerCase();
 
 // Panels hand us the whole new list; we work out what was added, changed or removed and send just that.
 async function syncRows(table, prev, next, toRow) {
@@ -630,6 +648,16 @@ async function fetchRemoteData(isSuperadmin, isStaff = isSuperadmin) {
   ];
   if (token && isSuperadmin) requests.push(sbRequest("/rest/v1/staff?select=*&order=id.asc", { token }));
   const [listingRows, agentRows, staffRows] = await Promise.all(requests);
+  // Agencies and the superadmin also see the agent logins they manage (the database only returns their own).
+  // Before the database update is applied this table doesn't exist, so a failure here is not an error.
+  let loginRows = null;
+  if (token && isStaff) {
+    try {
+      loginRows = await sbRequest("/rest/v1/agent_logins?select=*&order=id.asc", { token });
+    } catch (e) {
+      loginRows = null;
+    }
+  }
   let agents = agentRows;
   if (token && isStaff) {
     // Staff also see the private notes and verification details, which are never sent to anyone else.
@@ -646,7 +674,8 @@ async function fetchRemoteData(isSuperadmin, isStaff = isSuperadmin) {
     }
   }
   const data = { listings: listingRows.map(listingFromRow), agents: agents.map(agentFromRow) };
-  if (staffRows) data.admins = staffRows.filter((r) => r.role === "admin").map(staffFromRow);
+  if (staffRows) data.agencies = staffRows.filter((r) => r.role === "admin").map(staffFromRow);
+  if (Array.isArray(loginRows)) data.agentLogins = loginRows.map(agentLoginFromRow);
   return data;
 }
 
@@ -876,7 +905,7 @@ const STEPS = [
   },
 ];
 
-// Agents are added by the superadmin or agency admins from the dashboard. None are pre-loaded.
+// Agents are added by the superadmin or agencies from the dashboard. None are pre-loaded.
 const AGENTS = [];
 
 /* ---------------------------------------------------------------- */
@@ -2179,8 +2208,11 @@ function ProfilePage({ currentUser, onUpdateUser, onChangePhoto, favorites, list
               {currentUser.role === "superadmin" && (
                 <span className="pk-status-badge" style={{ "--badge-color": "var(--primary)" }}>Superadmin</span>
               )}
-              {currentUser.role === "admin" && (
-                <span className="pk-status-badge" style={{ "--badge-color": "var(--accent)" }}>Admin · {currentUser.agency}</span>
+              {currentUser.role === "agency" && (
+                <span className="pk-status-badge" style={{ "--badge-color": "var(--accent)" }}>Agency · {currentUser.agency}</span>
+              )}
+              {currentUser.role === "agent" && (
+                <span className="pk-status-badge" style={{ "--badge-color": "var(--accent)" }}>Agent · {currentUser.agency}</span>
               )}
               <button className="pk-icon-btn" aria-label="Edit name" onClick={() => setEditing(true)}>
                 <Pencil size={14} />
@@ -2192,9 +2224,9 @@ function ProfilePage({ currentUser, onUpdateUser, onChangePhoto, favorites, list
       </div>
 
       <div className="pk-profile-actions">
-        {(currentUser.role === "superadmin" || currentUser.role === "admin") && (
+        {isStaffUser(currentUser) && (
           <button className="pk-btn-outline" onClick={onGoAdmin}>
-            <Shield size={15} /> {currentUser.role === "superadmin" ? "Superadmin dashboard" : "Admin console"}
+            <Shield size={15} /> {currentUser.role === "superadmin" ? "Superadmin dashboard" : currentUser.role === "agent" ? "Agent console" : "Agency console"}
           </button>
         )}
         <button className="pk-btn-outline" onClick={onLogout}>
@@ -3102,7 +3134,7 @@ function RemoteStaffGate({ account, staffState, onLogin, onVerifyCode, onMfaDone
   );
 }
 
-function StaffGate({ admins, onAuthenticate, onExit }) {
+function StaffGate({ agencies, onAuthenticate, onExit }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -3129,11 +3161,11 @@ function StaffGate({ admins, onAuthenticate, onExit }) {
           user = { name: displayNameFor(normalized), email: normalized, isSuperAdmin: true, role: "superadmin" };
         }
       } else {
-        const admin = admins.find((a) => a.email.toLowerCase() === normalized);
+        const agencyRow = agencies.find((a) => a.email.toLowerCase() === normalized);
         // Always do the same amount of work so response time doesn't reveal which emails exist.
-        const attempt = await pbkdf2Hex(password, admin?.passSalt || SUPERADMIN_CONFIG.salt, ADMIN_HASH_ITERATIONS);
-        if (admin && admin.status === "active" && admin.passHash && attempt === admin.passHash) {
-          user = { name: displayNameFor(normalized, admin.name), email: normalized, isSuperAdmin: false, role: "admin", agency: admin.agency, adminId: admin.id };
+        const attempt = await pbkdf2Hex(password, agencyRow?.passSalt || SUPERADMIN_CONFIG.salt, ADMIN_HASH_ITERATIONS);
+        if (agencyRow && agencyRow.status === "active" && agencyRow.passHash && attempt === agencyRow.passHash) {
+          user = { name: displayNameFor(normalized, agencyRow.name), email: normalized, isSuperAdmin: false, role: "agency", agency: agencyRow.agency, staffId: agencyRow.id };
         }
       }
       if (user) {
@@ -3261,11 +3293,56 @@ function buildListingFromForm(form, nextId) {
   };
 }
 
+// Fill the listing form from a saved listing, so it can be edited.
+function formFromListing(l) {
+  const presets = AMENITY_PRESETS[l.tag] || [];
+  const amenities = Array.isArray(l.amenities) ? l.amenities : [];
+  const text = (v) => (v === null || v === undefined ? "" : String(v));
+  return {
+    title: l.title || "",
+    tag: l.tag || "Buy",
+    location: l.location || "",
+    priceValue: l.priceValue ? String(l.priceValue) : "",
+    period: l.period || "",
+    beds: text(l.beds),
+    baths: text(l.baths),
+    size: l.tag === "Land" || l.size === "—" ? "" : text(l.size),
+    spaceType: l.spaceType || "Office",
+    acres: text(l.acres),
+    img: l.img || "",
+    description: l.description === "No description provided yet." ? "" : l.description || "",
+    selectedAmenities: amenities.filter((a) => presets.includes(a)),
+    customAmenities: amenities.filter((a) => !presets.includes(a)).join(", "),
+    contactName: (l.contact && l.contact.name) || "",
+    contactRole: (l.contact && l.contact.role) || "Property Owner",
+    contactPhone: (l.contact && l.contact.phone) || "",
+    contactAgentPhone: (l.contact && l.contact.agentPhone) || "",
+    contactEmail: (l.contact && l.contact.email) || "",
+  };
+}
+
+// An edit changes only what the form shows. Who posted it, which agency it belongs to, whether it is live,
+// and whether it is featured stay exactly as they were (the database enforces this too).
+function applyFormToListing(existing, form) {
+  return {
+    ...existing,
+    ...buildListingFromForm(form, existing.id),
+    featured: existing.featured,
+    featuredUntil: existing.featuredUntil,
+    agency: existing.agency,
+    status: existing.status,
+    source: existing.source,
+    submittedBy: existing.submittedBy,
+  };
+}
+
 const BILLING_LABELS = { "": "One-off (sale price)", "/mo": "Monthly (rent/lease)" };
 const BILLING_VALUE_BY_LABEL = { "One-off (sale price)": "", "Monthly (rent/lease)": "/mo" };
 
-function ListingForm({ onSubmit, submitLabel = "Publish listing" }) {
-  const [form, setForm] = useState(EMPTY_LISTING_FORM);
+function ListingForm({ onSubmit, submitLabel = "Publish listing", initial = null, onCancel = null }) {
+  const editing = Boolean(initial);
+  const pfx = editing ? `pk-edit-${initial.id}` : "pk-form";
+  const [form, setForm] = useState(() => (initial ? formFromListing(initial) : EMPTY_LISTING_FORM));
   const [formError, setFormError] = useState("");
   const [photoBusy, setPhotoBusy] = useState(false);
 
@@ -3314,28 +3391,28 @@ function ListingForm({ onSubmit, submitLabel = "Publish listing" }) {
     }
     setFormError("");
     onSubmit(form);
-    setForm(EMPTY_LISTING_FORM);
+    if (!editing) setForm(EMPTY_LISTING_FORM);
   };
 
   return (
     <form onSubmit={handleSubmit} className="pk-admin-form">
-      <h3 className="pk-display text-lg font-semibold mb-4">New listing details</h3>
+      <h3 className="pk-display text-lg font-semibold mb-4">{editing ? "Edit listing details" : "New listing details"}</h3>
       <div className="pk-admin-form-grid">
         <label>
           Title
           <input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} required />
         </label>
-        <CustomSelect id="pk-form-category" label="Category" value={form.tag} options={["Buy", "Rent", "Commercial", "Land"]} onChange={handleCategoryChange} />
+        <CustomSelect id={`${pfx}-category`} label="Category" value={form.tag} options={["Buy", "Rent", "Commercial", "Land"]} onChange={handleCategoryChange} />
         <label>
           Location
           <input
             value={form.location}
             onChange={(e) => setForm({ ...form, location: e.target.value })}
             placeholder="e.g. Milimani, Nakuru"
-            list="pk-location-presets"
+            list={`${pfx}-locations`}
             required
           />
-          <datalist id="pk-location-presets">
+          <datalist id={`${pfx}-locations`}>
             {LOCATION_PRESETS.map((loc) => (
               <option key={loc} value={loc} />
             ))}
@@ -3346,7 +3423,7 @@ function ListingForm({ onSubmit, submitLabel = "Publish listing" }) {
           <input type="number" min="0" value={form.priceValue} onChange={(e) => setForm({ ...form, priceValue: e.target.value })} required />
         </label>
         <CustomSelect
-          id="pk-form-billing"
+          id={`${pfx}-billing`}
           label="Billing"
           value={BILLING_LABELS[form.period]}
           options={Object.values(BILLING_LABELS)}
@@ -3371,7 +3448,7 @@ function ListingForm({ onSubmit, submitLabel = "Publish listing" }) {
         {form.tag === "Commercial" && (
           <>
             <CustomSelect
-              id="pk-form-spacetype"
+              id={`${pfx}-spacetype`}
               label="Space type"
               value={form.spaceType}
               options={["Office", "Retail", "Warehouse"]}
@@ -3442,7 +3519,7 @@ function ListingForm({ onSubmit, submitLabel = "Publish listing" }) {
           <input value={form.contactName} onChange={(e) => setForm({ ...form, contactName: e.target.value })} />
         </label>
         <CustomSelect
-          id="pk-form-contactrole"
+          id={`${pfx}-contactrole`}
           label="Contact role"
           value={form.contactRole}
           options={["Property Owner", "Listing Agent"]}
@@ -3471,9 +3548,16 @@ function ListingForm({ onSubmit, submitLabel = "Publish listing" }) {
         </label>
       </div>
       {formError && <p className="pk-admin-error mt-4">{formError}</p>}
-      <button type="submit" className="pk-btn-primary justify-center mt-5" disabled={photoBusy}>
-        {submitLabel}
-      </button>
+      <div className="flex gap-3 flex-wrap mt-5">
+        <button type="submit" className="pk-btn-primary justify-center" disabled={photoBusy}>
+          {submitLabel}
+        </button>
+        {onCancel && (
+          <button type="button" className="pk-btn-outline justify-center" onClick={onCancel}>
+            Cancel
+          </button>
+        )}
+      </div>
     </form>
   );
 }
@@ -3525,6 +3609,7 @@ function AdminListingsPanel({ listings, onUpdateListings, onToast, adminName, op
   const [expandedIds, setExpandedIds] = useState(new Set());
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [featureFor, setFeatureFor] = useState(null);
+  const [editingId, setEditingId] = useState(null);
 
   const visible = filter === "all" ? listings : listings.filter((l) => l.status === filter);
   const sorted = [...visible].sort((a, b) => b.id - a.id);
@@ -3565,6 +3650,14 @@ function AdminListingsPanel({ listings, onUpdateListings, onToast, adminName, op
     setFeatureFor(null);
   };
 
+  const saveEdit = (id, form) => {
+    const listing = listings.find((l) => l.id === id);
+    if (!listing) return;
+    onUpdateListings(listings.map((l) => (l.id === id ? applyFormToListing(l, form) : l)));
+    onToast?.(`"${form.title.trim()}" updated`, "success");
+    setEditingId(null);
+  };
+
   const handleAdd = (form) => {
     const nextId = listings.length ? Math.max(...listings.map((l) => l.id)) + 1 : 1;
     const newListing = {
@@ -3585,7 +3678,7 @@ function AdminListingsPanel({ listings, onUpdateListings, onToast, adminName, op
         <div>
           <h2 className="pk-display text-2xl font-semibold mb-1">Listings</h2>
           <p className="pk-ink-soft text-sm">
-            {listings.length} total · admin-submitted listings land here as "Pending" for your review.
+            {listings.length} total · listings from agencies and agents land here as "Pending" for your review.
           </p>
         </div>
         <button className="pk-btn-primary" onClick={() => setShowForm((s) => !s)}>
@@ -3655,6 +3748,9 @@ function AdminListingsPanel({ listings, onUpdateListings, onToast, adminName, op
                     <RotateCcw size={15} />
                   </button>
                 )}
+                <button className="pk-icon-btn" title="Edit" aria-label="Edit" onClick={() => setEditingId(editingId === l.id ? null : l.id)}>
+                  <Pencil size={15} />
+                </button>
                 <button className="pk-icon-btn" title="Delete" aria-label="Delete" onClick={() => setConfirmDelete(l)}>
                   <Trash2 size={15} />
                 </button>
@@ -3663,6 +3759,9 @@ function AdminListingsPanel({ listings, onUpdateListings, onToast, adminName, op
                 </button>
               </div>
             </div>
+            {editingId === l.id && (
+              <ListingForm initial={l} submitLabel="Save changes" onSubmit={(form) => saveEdit(l.id, form)} onCancel={() => setEditingId(null)} />
+            )}
             {featureFor === l.id && (
               <div className="pk-feature-menu" role="group" aria-label="Feature this listing">
                 <span className="text-sm font-semibold">Feature for:</span>
@@ -3698,7 +3797,7 @@ function AdminListingsPanel({ listings, onUpdateListings, onToast, adminName, op
   );
 }
 
-function AdminAdminsPanel({ admins, onUpdateAdmins, onToast, listings, agents }) {
+function AgenciesPanel({ agencies, onUpdateAgencies, onToast, listings, agents }) {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [agency, setAgency] = useState("");
@@ -3725,15 +3824,15 @@ function AdminAdminsPanel({ admins, onUpdateAdmins, onToast, listings, agents })
       setFormError("Use a password of at least 10 characters.");
       return;
     }
-    if (admins.some((a) => a.email.toLowerCase() === normalizedEmail)) {
-      setFormError("An admin with that email already exists.");
+    if (agencies.some((a) => a.email.toLowerCase() === normalizedEmail)) {
+      setFormError("An agency with that email already exists.");
       return;
     }
     setFormError("");
     const passSalt = REMOTE ? "" : randomSalt();
     const passHash = REMOTE ? "" : await pbkdf2Hex(password, passSalt, ADMIN_HASH_ITERATIONS);
-    const newAdmin = {
-      id: admins.length ? Math.max(...admins.map((a) => a.id)) + 1 : 1,
+    const newAgency = {
+      id: agencies.length ? Math.max(...agencies.map((a) => a.id)) + 1 : 1,
       name: name.trim(),
       email: normalizedEmail,
       agency: agency.trim(),
@@ -3741,9 +3840,9 @@ function AdminAdminsPanel({ admins, onUpdateAdmins, onToast, listings, agents })
       status: "active",
       createdAt: new Date().toISOString().slice(0, 10),
     };
-    onUpdateAdmins([...admins, newAdmin]);
-    onToast?.(`Admin account created for ${newAdmin.name}`, "success");
-    setJustCreated(newAdmin.email);
+    onUpdateAgencies([...agencies, newAgency]);
+    onToast?.(`Agency account created for ${newAgency.name}`, "success");
+    setJustCreated(newAgency.email);
     setName("");
     setEmail("");
     setAgency("");
@@ -3751,26 +3850,26 @@ function AdminAdminsPanel({ admins, onUpdateAdmins, onToast, listings, agents })
   };
 
   const toggleStatus = (id) => {
-    const admin = admins.find((a) => a.id === id);
-    const nextStatus = admin?.status === "active" ? "suspended" : "active";
-    onUpdateAdmins(admins.map((a) => (a.id === id ? { ...a, status: nextStatus } : a)));
-    if (admin) onToast?.(`${admin.name} ${nextStatus === "active" ? "reactivated" : "suspended"}`, nextStatus === "active" ? "success" : "warning");
+    const agencyRow = agencies.find((a) => a.id === id);
+    const nextStatus = agencyRow?.status === "active" ? "suspended" : "active";
+    onUpdateAgencies(agencies.map((a) => (a.id === id ? { ...a, status: nextStatus } : a)));
+    if (agencyRow) onToast?.(`${agencyRow.name} ${nextStatus === "active" ? "reactivated" : "suspended"}`, nextStatus === "active" ? "success" : "warning");
   };
 
-  const deleteAdmin = (id) => {
-    const admin = admins.find((a) => a.id === id);
-    onUpdateAdmins(admins.filter((a) => a.id !== id));
-    if (admin) onToast?.(`Removed ${admin.name}`, "danger");
+  const deleteAgency = (id) => {
+    const agencyRow = agencies.find((a) => a.id === id);
+    onUpdateAgencies(agencies.filter((a) => a.id !== id));
+    if (agencyRow) onToast?.(`Removed ${agencyRow.name}`, "danger");
     setConfirmDelete(null);
   };
 
   return (
     <div>
-      <h2 className="pk-display text-2xl font-semibold mb-1">Admin accounts</h2>
+      <h2 className="pk-display text-2xl font-semibold mb-1">Agencies</h2>
       <p className="pk-ink-soft text-sm mb-6">
         {REMOTE
-          ? "Add an agency admin by email. They create a normal account on the site with that email, confirm it, then use Staff sign in. Each admin can add listings and view the agents and listings under their own agency only."
-          : "Create agency admin accounts here. Each admin can add listings and view the agents and listings under their own agency only."}
+          ? "Add an agency by email. They create a normal account on the site with that email, confirm it, then use Staff sign in. Each agency can add listings, see every listing its agents post, edit them, and manage its own agents."
+          : "Create agency accounts here. Each agency can add listings, see every listing its agents post, edit them, and manage its own agents."}
       </p>
 
       <form onSubmit={handleCreate} className="pk-admin-form">
@@ -3794,7 +3893,7 @@ function AdminAdminsPanel({ admins, onUpdateAdmins, onToast, listings, agents })
           </label>
           {!REMOTE && (
           <label className="pk-admin-form-full">
-            Password for this admin
+            Password for this agency
             <div className="pk-input-wrap">
               <input
                 type={showPassword ? "text" : "password"}
@@ -3816,7 +3915,7 @@ function AdminAdminsPanel({ admins, onUpdateAdmins, onToast, listings, agents })
           )}
         </div>
         <button type="submit" className="pk-btn-primary justify-center mt-5">
-          <UserCog size={16} /> {REMOTE ? "Add admin" : "Create admin account"}
+          <UserCog size={16} /> {REMOTE ? "Add agency" : "Create agency account"}
         </button>
       </form>
 
@@ -3826,7 +3925,7 @@ function AdminAdminsPanel({ admins, onUpdateAdmins, onToast, listings, agents })
         <div className="pk-admin-notice">
           {REMOTE ? (
             <>
-              <strong>{justCreated}</strong> now has agency admin access. Ask them to sign up on the site with that email, confirm it from
+              <strong>{justCreated}</strong> now has agency access. Ask them to sign up on the site with that email, confirm it from
               their inbox, then use Staff sign in. Until they confirm, nothing is unlocked.
             </>
           ) : (
@@ -3839,8 +3938,8 @@ function AdminAdminsPanel({ admins, onUpdateAdmins, onToast, listings, agents })
       )}
 
       <div className="pk-admin-listing-list mt-6">
-        {admins.length === 0 && <p className="pk-ink-soft text-sm">No admin accounts yet.</p>}
-        {admins.map((a) => {
+        {agencies.length === 0 && <p className="pk-ink-soft text-sm">No agencies yet.</p>}
+        {agencies.map((a) => {
           const agencyAgents = agents.filter((ag) => ag.agency === a.agency);
           const agencyListings = listings.filter((l) => l.agency === a.agency);
           return (
@@ -3903,10 +4002,10 @@ function AdminAdminsPanel({ admins, onUpdateAdmins, onToast, listings, agents })
 
       <ConfirmDialog
         open={!!confirmDelete}
-        title="Remove this admin account?"
+        title="Remove this agency account?"
         message={confirmDelete ? `${confirmDelete.name} will lose access immediately. This can't be undone.` : ""}
         confirmLabel="Remove"
-        onConfirm={() => confirmDelete && deleteAdmin(confirmDelete.id)}
+        onConfirm={() => confirmDelete && deleteAgency(confirmDelete.id)}
         onCancel={() => setConfirmDelete(null)}
       />
     </div>
@@ -3915,8 +4014,10 @@ function AdminAdminsPanel({ admins, onUpdateAdmins, onToast, listings, agents })
 
 const AGENT_FOCUS_OPTIONS = ["Residential Sales", "Rentals", "Commercial Leasing", "Land & Development"];
 
-function AgentForm({ agencyLocked, agencySuggestions = [], onSubmit }) {
-  const blank = { name: "", focus: AGENT_FOCUS_OPTIONS[0], area: "", agency: agencyLocked || "", img: "" };
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function AgentForm({ agencyLocked, agencySuggestions = [], onSubmit, allowLogin = false }) {
+  const blank = { name: "", focus: AGENT_FOCUS_OPTIONS[0], area: "", agency: agencyLocked || "", img: "", loginEmail: "" };
   const [form, setForm] = useState(blank);
   const [error, setError] = useState("");
   const [done, setDone] = useState("");
@@ -3947,10 +4048,24 @@ function AgentForm({ agencyLocked, agencySuggestions = [], onSubmit }) {
       setError("The photo link must start with https:// (or upload a photo).");
       return;
     }
+    const loginEmail = allowLogin ? form.loginEmail.trim().toLowerCase() : "";
+    if (loginEmail && !EMAIL_PATTERN.test(loginEmail)) {
+      setError("Enter a valid email address for the agent's login, or leave it blank.");
+      return;
+    }
     setError("");
-    onSubmit({ ...form, agency: (agencyLocked || form.agency).trim() });
+    setDone("");
+    // The panel may hand back a message (for example "that email is already in use"); if so, keep the form as it is.
+    const problem = onSubmit({ ...form, loginEmail, agency: (agencyLocked || form.agency).trim() });
+    if (typeof problem === "string" && problem) {
+      setError(problem);
+      return;
+    }
     setForm(blank);
-    setDone(`${form.name.trim()} added. They stay hidden from the public site until verified.`);
+    setDone(
+      `${form.name.trim()} added. They stay hidden from the public site until verified.` +
+        (loginEmail ? ` They can now create an account with ${loginEmail}, confirm it, then use Staff sign in to add and remove their listings.` : "")
+    );
   };
 
   return (
@@ -3988,6 +4103,17 @@ function AgentForm({ agencyLocked, agencySuggestions = [], onSubmit }) {
             ))}
           </datalist>
         </label>
+        {allowLogin && (
+          <label className="pk-admin-form-full">
+            Login email (optional)
+            <input
+              type="email"
+              value={form.loginEmail}
+              onChange={(e) => setForm({ ...form, loginEmail: e.target.value })}
+              placeholder="Lets this agent sign in to add and remove their own listings"
+            />
+          </label>
+        )}
         <label className="pk-admin-form-full">
           Photo (optional)
           <input type="file" accept="image/*" onChange={handleFile} />
@@ -4002,6 +4128,103 @@ function AgentForm({ agencyLocked, agencySuggestions = [], onSubmit }) {
         <Plus size={15} /> Add agent
       </button>
     </form>
+  );
+}
+
+// The rules for agent logins, shared by the agency console and the superadmin console.
+// An agent login is matched to its agent by agency + name, so that pair has to be unique.
+function makeLoginActions({ allAgents, agentLogins, onUpdateAgentLogins, onToast, reservedEmails = [] }) {
+  const loginFor = (agent) => agentLogins.find((l) => sameText(l.agency, agent.agency) && sameText(l.agentName, agent.name)) || null;
+  const emailProblem = (email, agent) => {
+    if (!EMAIL_PATTERN.test(email)) return "Enter a valid email address.";
+    if (agentLogins.some((l) => sameText(l.email, email))) return "That email already has an agent login.";
+    if (reservedEmails.some((e) => sameText(e, email))) return "That email already belongs to an agency account.";
+    if (!agent.agency) return "An agent needs an agency before they can have a login.";
+    const others = allAgents.filter((a) => a.id !== agent.id && sameText(a.agency, agent.agency) && sameText(a.name, agent.name));
+    if (others.length > 0) {
+      return `${agent.agency} has more than one agent called ${agent.name}. Give them different names first so their login points to the right person.`;
+    }
+    return "";
+  };
+  const newLogin = (agent, email) => ({
+    id: agentLogins.length ? Math.max(...agentLogins.map((l) => l.id)) + 1 : 1,
+    email,
+    agentName: agent.name,
+    agency: agent.agency,
+    status: "active",
+  });
+  return {
+    loginFor,
+    emailProblem,
+    // Returns a message if the login can't be given, otherwise an empty string.
+    grant: (agent, rawEmail) => {
+      const email = String(rawEmail || "").trim().toLowerCase();
+      const problem = emailProblem(email, agent);
+      if (problem) return problem;
+      onUpdateAgentLogins([...agentLogins, newLogin(agent, email)]);
+      onToast?.(`${agent.name} can now sign in with ${email}`, "success");
+      return "";
+    },
+    setStatus: (login, status) => {
+      onUpdateAgentLogins(agentLogins.map((l) => (l.id === login.id ? { ...l, status } : l)));
+      onToast?.(`${login.agentName} ${status === "active" ? "can sign in again" : "can't sign in for now"}`, status === "active" ? "success" : "warning");
+    },
+    revoke: (login) => {
+      onUpdateAgentLogins(agentLogins.filter((l) => l.id !== login.id));
+      onToast?.(`Login removed for ${login.agentName}`, "danger");
+    },
+    newLogin,
+  };
+}
+
+// Shows and manages one agent's login: whether they can sign in, and with which email.
+function AgentAccess({ agent, login, onGrant, onSetStatus, onRevoke }) {
+  const [email, setEmail] = useState("");
+  const [error, setError] = useState("");
+  const submit = (e) => {
+    e.preventDefault();
+    const problem = onGrant(agent, email);
+    if (problem) {
+      setError(problem);
+      return;
+    }
+    setError("");
+    setEmail("");
+  };
+  return (
+    <div className="mt-4">
+      <div className="pk-admin-expand-label">Login access</div>
+      {login ? (
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-sm">{login.email}</span>
+          <span className="pk-status-badge" style={{ "--badge-color": login.status === "active" ? "var(--primary)" : "var(--brick)" }}>
+            {login.status === "active" ? "Can sign in" : "Suspended"}
+          </span>
+          <button type="button" className="pk-btn-outline" onClick={() => onSetStatus(login, login.status === "active" ? "suspended" : "active")}>
+            {login.status === "active" ? "Suspend" : "Reactivate"}
+          </button>
+          <button type="button" className="pk-btn-outline" onClick={() => onRevoke(login)}>
+            Remove access
+          </button>
+        </div>
+      ) : (
+        <form onSubmit={submit} className="flex gap-2 flex-wrap items-center">
+          <input
+            type="email"
+            className="pk-note-input"
+            aria-label={`Login email for ${agent.name}`}
+            placeholder="Email this agent will sign in with"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+          />
+          <button type="submit" className="pk-btn-outline">
+            Give login
+          </button>
+        </form>
+      )}
+      {error && <p className="pk-admin-error mt-2">{error}</p>}
+    </div>
   );
 }
 
@@ -4054,7 +4277,14 @@ function VerifyDialog({ agent, onConfirm, onCancel }) {
   );
 }
 
-function AdminAgentsPanel({ agents, onUpdateAgents, onToast, admins = [] }) {
+function AdminAgentsPanel({ agents, onUpdateAgents, onToast, agencies = [], agentLogins = [], onUpdateAgentLogins }) {
+  const loginActions = makeLoginActions({
+    allAgents: agents,
+    agentLogins,
+    onUpdateAgentLogins,
+    onToast,
+    reservedEmails: agencies.map((a) => a.email),
+  });
   const [expandedIds, setExpandedIds] = useState(new Set());
   const [confirmAction, setConfirmAction] = useState(null);
   const [verifying, setVerifying] = useState(null);
@@ -4082,8 +4312,14 @@ function AdminAgentsPanel({ agents, onUpdateAgents, onToast, admins = [] }) {
       verifiedAt: null,
       verification: {},
     };
+    if (data.loginEmail) {
+      const problem = loginActions.emailProblem(data.loginEmail, newAgent);
+      if (problem) return problem;
+    }
     onUpdateAgents([...agents, newAgent]);
+    if (data.loginEmail) onUpdateAgentLogins([...agentLogins, loginActions.newLogin(newAgent, data.loginEmail)]);
     onToast?.(`${newAgent.name} added`, "success");
+    return "";
   };
 
   const confirmVerify = (agent, details) => {
@@ -4110,6 +4346,9 @@ function AdminAgentsPanel({ agents, onUpdateAgents, onToast, admins = [] }) {
   const deleteAgent = (id) => {
     const agent = agents.find((a) => a.id === id);
     onUpdateAgents(agents.filter((a) => a.id !== id));
+    // Removing an agent also removes their login.
+    const login = agent ? loginActions.loginFor(agent) : null;
+    if (login && onUpdateAgentLogins) onUpdateAgentLogins(agentLogins.filter((l) => l.id !== login.id));
     if (agent) onToast?.(`Removed ${agent.name}`, "danger");
     setConfirmAction(null);
   };
@@ -4118,7 +4357,7 @@ function AdminAgentsPanel({ agents, onUpdateAgents, onToast, admins = [] }) {
     <div>
       <h2 className="pk-display text-2xl font-semibold mb-1">Agents</h2>
       <p className="pk-ink-soft text-sm mb-6">Add agents, then verify them. Only verified agents appear on the public site; banned or unverified agents are hidden.</p>
-      <AgentForm agencySuggestions={admins.map((a) => a.agency)} onSubmit={addAgent} />
+      <AgentForm agencySuggestions={agencies.map((a) => a.agency)} onSubmit={addAgent} allowLogin={REMOTE && Boolean(onUpdateAgentLogins)} />
       {agents.length === 0 && <p className="pk-ink-soft text-sm">No agents yet.</p>}
 
       <div className="pk-admin-listing-list">
@@ -4181,9 +4420,12 @@ function AdminAgentsPanel({ agents, onUpdateAgents, onToast, admins = [] }) {
                     <AgentScore rating={a.rating} reviews={a.reviews} />
                     <div className="pk-admin-expand-label mt-4">Agency</div>
                     <p className="pk-ink-soft text-sm">{a.agency || "Independent"}</p>
+                    {REMOTE && onUpdateAgentLogins && (
+                      <AgentAccess agent={a} login={loginActions.loginFor(a)} onGrant={loginActions.grant} onSetStatus={loginActions.setStatus} onRevoke={loginActions.revoke} />
+                    )}
                   </div>
                   <div>
-                    <div className="pk-admin-expand-label">Notes from admins</div>
+                    <div className="pk-admin-expand-label">Notes from agencies</div>
                     {(a.comments || []).length === 0 && <p className="pk-ink-soft text-sm">No notes yet.</p>}
                     <div className="flex flex-col gap-2">
                       {(a.comments || []).map((c) => (
@@ -4223,10 +4465,28 @@ function AdminAgentsPanel({ agents, onUpdateAgents, onToast, admins = [] }) {
   );
 }
 
-function AgencyListingsPanel({ agency, adminName, listings, allListings, onUpdateListings, onToast }) {
+// Used by agencies and by agents. An agent sees only the listings they posted and can add or remove them.
+// An agency sees every listing posted under it (its own and its agents'), can filter by who posted it,
+// and can edit or remove any of them.
+const ALL_POSTERS = "All posters";
+
+function AgencyListingsPanel({ role = "agency", agency, userName, listings, allListings, onUpdateListings, onToast }) {
+  const isAgent = role === "agent";
   const [expandedIds, setExpandedIds] = useState(new Set());
   const [confirmDelete, setConfirmDelete] = useState(null);
-  const sorted = [...listings].sort((a, b) => b.id - a.id);
+  const [editingId, setEditingId] = useState(null);
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [posterFilter, setPosterFilter] = useState(ALL_POSTERS);
+
+  const posterLabel = (name) => (sameText(name, userName) ? `${name} (you)` : name || "Unknown");
+  const posters = [...new Set(listings.map((l) => l.submittedBy || ""))].filter(Boolean).sort((a, b) => a.localeCompare(b));
+  const posterOptions = [ALL_POSTERS, ...posters.map(posterLabel)];
+  const activePoster = posters.find((p) => posterLabel(p) === posterFilter) || null;
+
+  const visible = listings
+    .filter((l) => statusFilter === "all" || l.status === statusFilter)
+    .filter((l) => !activePoster || l.submittedBy === activePoster);
+  const sorted = [...visible].sort((a, b) => b.id - a.id);
 
   const toggleExpand = (id) => {
     setExpandedIds((prev) => {
@@ -4243,10 +4503,16 @@ function AgencyListingsPanel({ agency, adminName, listings, allListings, onUpdat
       agency,
       status: "pending",
       source: "admin",
-      submittedBy: adminName,
+      submittedBy: userName,
     };
     onUpdateListings([...allListings, newListing]);
     onToast?.(`"${newListing.title}" submitted for review`, "success");
+  };
+
+  const saveEdit = (id, form) => {
+    onUpdateListings(allListings.map((l) => (l.id === id ? applyFormToListing(l, form) : l)));
+    onToast?.(`"${form.title.trim()}" updated`, "success");
+    setEditingId(null);
   };
 
   const deleteOwn = (id) => {
@@ -4258,15 +4524,34 @@ function AgencyListingsPanel({ agency, adminName, listings, allListings, onUpdat
 
   return (
     <div>
-      <h2 className="pk-display text-2xl font-semibold mb-1">My Listings</h2>
+      <h2 className="pk-display text-2xl font-semibold mb-1">{isAgent ? "My Listings" : "Listings"}</h2>
       <p className="pk-ink-soft text-sm mb-6">
-        Listings you submit land as "Pending" until a superadmin reviews them. {listings.length} total so far.
+        {isAgent
+          ? `Listings you add land as "Pending" until a superadmin reviews them. You can remove your own listings; ${agency} can also edit them. ${listings.length} total so far.`
+          : `Every listing posted under ${agency}, by you or by your agents. Filter by who posted it, and edit or remove any of them. New listings land as "Pending" until a superadmin reviews them. ${listings.length} total.`}
       </p>
 
       <ListingForm onSubmit={handleAdd} submitLabel="Submit for review" />
 
+      <div className="pk-chip-row mt-6">
+        {["all", "pending", "approved", "held", "revoked"].map((f) => (
+          <button key={f} className={`pk-chip ${statusFilter === f ? "pk-chip-active" : ""}`} onClick={() => setStatusFilter(f)}>
+            {f === "all" ? "All" : LISTING_STATUS_META[f].label}
+          </button>
+        ))}
+      </div>
+      {!isAgent && posters.length > 0 && (
+        <div className="mt-4" style={{ maxWidth: 320 }}>
+          <CustomSelect id="pk-posted-by" label="Posted by" value={activePoster ? posterLabel(activePoster) : ALL_POSTERS} options={posterOptions} onChange={setPosterFilter} />
+        </div>
+      )}
+
       <div className="pk-admin-listing-list mt-6">
-        {sorted.length === 0 && <p className="pk-ink-soft text-sm">You haven't submitted any listings yet.</p>}
+        {sorted.length === 0 && (
+          <p className="pk-ink-soft text-sm">
+            {listings.length === 0 ? (isAgent ? "You haven't added any listings yet." : "No listings have been posted under your agency yet.") : "No listings match this view."}
+          </p>
+        )}
         {sorted.map((l) => (
           <div key={l.id} className="pk-admin-card">
             <div className="pk-admin-listing-row">
@@ -4282,8 +4567,14 @@ function AgencyListingsPanel({ agency, adminName, listings, allListings, onUpdat
                   {l.location} · {l.price}
                   {l.period} · {l.tag}
                 </p>
+                {!isAgent && <p className="pk-ink-soft text-xs">Posted by {l.submittedBy || "—"}</p>}
               </div>
               <div className="pk-admin-listing-actions">
+                {!isAgent && (
+                  <button className="pk-icon-btn" title="Edit" aria-label="Edit" onClick={() => setEditingId(editingId === l.id ? null : l.id)}>
+                    <Pencil size={15} />
+                  </button>
+                )}
                 <button className="pk-icon-btn" title="Delete" aria-label="Delete" onClick={() => setConfirmDelete(l)}>
                   <Trash2 size={15} />
                 </button>
@@ -4292,6 +4583,9 @@ function AgencyListingsPanel({ agency, adminName, listings, allListings, onUpdat
                 </button>
               </div>
             </div>
+            {!isAgent && editingId === l.id && (
+              <ListingForm initial={l} submitLabel="Save changes" onSubmit={(form) => saveEdit(l.id, form)} onCancel={() => setEditingId(null)} />
+            )}
             {expandedIds.has(l.id) && <ListingExpandDetails listing={l} />}
           </div>
         ))}
@@ -4309,7 +4603,8 @@ function AgencyListingsPanel({ agency, adminName, listings, allListings, onUpdat
   );
 }
 
-function AgencyAgentsPanel({ agents, allAgents, onUpdateAgents, adminName, agency }) {
+function AgencyAgentsPanel({ agents, allAgents, onUpdateAgents, adminName, agency, agentLogins = [], onUpdateAgentLogins, onToast }) {
+  const loginActions = makeLoginActions({ allAgents, agentLogins, onUpdateAgentLogins, onToast });
   const [drafts, setDrafts] = useState({});
   const [expandedIds, setExpandedIds] = useState(new Set());
 
@@ -4334,7 +4629,13 @@ function AgencyAgentsPanel({ agents, allAgents, onUpdateAgents, adminName, agenc
       comments: [],
       img: data.img || "",
     };
+    if (data.loginEmail) {
+      const problem = loginActions.emailProblem(data.loginEmail, newAgent);
+      if (problem) return problem;
+    }
     onUpdateAgents([...allAgents, newAgent]);
+    if (data.loginEmail) onUpdateAgentLogins([...agentLogins, loginActions.newLogin(newAgent, data.loginEmail)]);
+    return "";
   };
 
   const addComment = (agentId) => {
@@ -4348,8 +4649,11 @@ function AgencyAgentsPanel({ agents, allAgents, onUpdateAgents, adminName, agenc
   return (
     <div>
       <h2 className="pk-display text-2xl font-semibold mb-1">My Agents</h2>
-      <p className="pk-ink-soft text-sm mb-6">Agents under your agency and your notes on them. New agents appear on the public site once the superadmin verifies them.</p>
-      <AgentForm agencyLocked={agency} onSubmit={addAgent} />
+      <p className="pk-ink-soft text-sm mb-6">
+        Agents under your agency and your notes on them. New agents appear on the public site once the superadmin verifies them.
+        {REMOTE && onUpdateAgentLogins ? " Give an agent a login so they can add and remove their own listings; you can see and edit everything they post." : ""}
+      </p>
+      <AgentForm agencyLocked={agency} onSubmit={addAgent} allowLogin={REMOTE && Boolean(onUpdateAgentLogins)} />
 
       {agents.length === 0 && <p className="pk-ink-soft text-sm">No agents are assigned to your agency yet.</p>}
 
@@ -4376,6 +4680,11 @@ function AgencyAgentsPanel({ agents, allAgents, onUpdateAgents, adminName, agenc
             </div>
             {expandedIds.has(a.id) && (
               <div className="pk-admin-expand">
+                {REMOTE && onUpdateAgentLogins && (
+                  <div className="mb-4">
+                    <AgentAccess agent={a} login={loginActions.loginFor(a)} onGrant={loginActions.grant} onSetStatus={loginActions.setStatus} onRevoke={loginActions.revoke} />
+                  </div>
+                )}
                 <div className="pk-admin-expand-label">Notes</div>
                 <div className="flex flex-col gap-2 mb-3">
                   {(a.comments || []).length === 0 && <p className="pk-ink-soft text-xs">No notes yet.</p>}
@@ -4406,28 +4715,8 @@ function AgencyAgentsPanel({ agents, allAgents, onUpdateAgents, adminName, agenc
   );
 }
 
-function AgencyAdminConsole({ theme, setTheme, onExit, currentAdmin, listings, onUpdateListings, agents, onUpdateAgents }) {
-  const [tab, setTab] = useState("listings");
-  const [toasts, setToasts] = useState([]);
-  const toastIdRef = useRef(0);
-
-  const showToast = (message, type = "success") => {
-    const id = ++toastIdRef.current;
-    setToasts((prev) => [...prev, { id, message, type }]);
-    setTimeout(() => {
-      setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 3500);
-  };
-  const dismissToast = (id) => setToasts((prev) => prev.filter((t) => t.id !== id));
-
-  const myAgents = agents.filter((a) => a.agency === currentAdmin.agency);
-  const myListings = listings.filter((l) => l.agency === currentAdmin.agency);
-
-  const TABS = [
-    { key: "listings", label: "My Listings", icon: ClipboardList },
-    { key: "agents", label: "My Agents", icon: BadgeCheck },
-  ];
-
+// Shared page frame for the agency and agent consoles.
+function StaffConsoleShell({ theme, setTheme, onExit, title, subtitle, tabs, tab, setTab, toasts, onDismissToast, children }) {
   return (
     <div className="pk-admin-shell">
       <div className="pk-admin-topbar">
@@ -4435,9 +4724,9 @@ function AgencyAdminConsole({ theme, setTheme, onExit, currentAdmin, listings, o
           <LogoMark size={30} />
           <div>
             <div className="pk-display font-semibold" style={{ lineHeight: 1.15 }}>
-              Hao yangu realtors admin
+              {title}
             </div>
-            <div className="pk-ink-soft text-xs">{currentAdmin.agency}</div>
+            <div className="pk-ink-soft text-xs">{subtitle}</div>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -4451,7 +4740,7 @@ function AgencyAdminConsole({ theme, setTheme, onExit, currentAdmin, listings, o
       </div>
       <div className="pk-admin-body">
         <nav className="pk-admin-sidebar">
-          {TABS.map((t) => {
+          {tabs.map((t) => {
             const TIcon = t.icon;
             return (
               <button key={t.key} className={`pk-admin-nav-item ${tab === t.key ? "pk-admin-nav-active" : ""}`} onClick={() => setTab(t.key)}>
@@ -4462,28 +4751,115 @@ function AgencyAdminConsole({ theme, setTheme, onExit, currentAdmin, listings, o
         </nav>
         <main className="pk-admin-main">
           <div key={tab} className="pk-admin-tab-content">
-            {tab === "listings" && (
-              <AgencyListingsPanel
-                agency={currentAdmin.agency}
-                adminName={currentAdmin.name}
-                listings={myListings}
-                allListings={listings}
-                onUpdateListings={onUpdateListings}
-                onToast={showToast}
-              />
-            )}
-            {tab === "agents" && (
-              <AgencyAgentsPanel agents={myAgents} allAgents={agents} onUpdateAgents={onUpdateAgents} adminName={currentAdmin.name} agency={currentAdmin.agency} />
-            )}
+            {children}
           </div>
         </main>
       </div>
-      <AdminToastStack toasts={toasts} onDismiss={dismissToast} />
+      <AdminToastStack toasts={toasts} onDismiss={onDismissToast} />
     </div>
   );
 }
 
-function AdminConsole({ theme, setTheme, onExit, adminName, listings, onUpdateListings, agents, onUpdateAgents, admins, onUpdateAdmins }) {
+function useConsoleToasts() {
+  const [toasts, setToasts] = useState([]);
+  const toastIdRef = useRef(0);
+  const showToast = (message, type = "success") => {
+    const id = ++toastIdRef.current;
+    setToasts((prev) => [...prev, { id, message, type }]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 3500);
+  };
+  const dismissToast = (id) => setToasts((prev) => prev.filter((t) => t.id !== id));
+  return { toasts, showToast, dismissToast };
+}
+
+// An agency sees its own listings and its agents' listings, and can edit any of them.
+function AgencyConsole({ theme, setTheme, onExit, currentAgency, listings, onUpdateListings, agents, onUpdateAgents, agentLogins, onUpdateAgentLogins }) {
+  const [tab, setTab] = useState("listings");
+  const { toasts, showToast, dismissToast } = useConsoleToasts();
+
+  const myAgents = agents.filter((a) => sameText(a.agency, currentAgency.agency));
+  const myListings = listings.filter((l) => sameText(l.agency, currentAgency.agency));
+
+  const TABS = [
+    { key: "listings", label: "Listings", icon: ClipboardList },
+    { key: "agents", label: "My Agents", icon: BadgeCheck },
+  ];
+
+  return (
+    <StaffConsoleShell
+      theme={theme}
+      setTheme={setTheme}
+      onExit={onExit}
+      title="Hao yangu realtors agency"
+      subtitle={currentAgency.agency}
+      tabs={TABS}
+      tab={tab}
+      setTab={setTab}
+      toasts={toasts}
+      onDismissToast={dismissToast}
+    >
+      {tab === "listings" && (
+        <AgencyListingsPanel
+          role="agency"
+          agency={currentAgency.agency}
+          userName={currentAgency.name}
+          listings={myListings}
+          allListings={listings}
+          onUpdateListings={onUpdateListings}
+          onToast={showToast}
+        />
+      )}
+      {tab === "agents" && (
+        <AgencyAgentsPanel
+          agents={myAgents}
+          allAgents={agents}
+          onUpdateAgents={onUpdateAgents}
+          adminName={currentAgency.name}
+          agency={currentAgency.agency}
+          agentLogins={agentLogins}
+          onUpdateAgentLogins={onUpdateAgentLogins}
+          onToast={showToast}
+        />
+      )}
+    </StaffConsoleShell>
+  );
+}
+
+// An agent adds listings and removes their own. They see only what they posted.
+function AgentConsole({ theme, setTheme, onExit, currentAgent, listings, onUpdateListings }) {
+  const [tab, setTab] = useState("listings");
+  const { toasts, showToast, dismissToast } = useConsoleToasts();
+  const myListings = listings.filter((l) => sameText(l.agency, currentAgent.agency) && sameText(l.submittedBy, currentAgent.name));
+  const TABS = [{ key: "listings", label: "My Listings", icon: ClipboardList }];
+  return (
+    <StaffConsoleShell
+      theme={theme}
+      setTheme={setTheme}
+      onExit={onExit}
+      title="Hao yangu realtors agent"
+      subtitle={`${currentAgent.name} · ${currentAgent.agency}`}
+      tabs={TABS}
+      tab={tab}
+      setTab={setTab}
+      toasts={toasts}
+      onDismissToast={dismissToast}
+    >
+      <AgencyListingsPanel
+        role="agent"
+        agency={currentAgent.agency}
+        userName={currentAgent.name}
+        listings={myListings}
+        allListings={listings}
+        onUpdateListings={onUpdateListings}
+        onToast={showToast}
+      />
+    </StaffConsoleShell>
+  );
+}
+
+function AdminConsole({ theme, setTheme, onExit, adminName, listings, onUpdateListings, agents, onUpdateAgents, agencies, onUpdateAgencies, agentLogins, onUpdateAgentLogins }) {
   const [tab, setTab] = useState("overview");
   const [tabIntent, setTabIntent] = useState(null);
   const [stats, setStats] = useState(null);
@@ -4536,7 +4912,7 @@ function AdminConsole({ theme, setTheme, onExit, adminName, listings, onUpdateLi
   const TABS = [
     { key: "overview", label: "Overview", icon: LayoutDashboard },
     { key: "listings", label: "Listings", icon: ClipboardList, badge: pendingListings, attention: pendingListings > 0 },
-    { key: "admins", label: "Admins", icon: UserCog, badge: admins.length },
+    { key: "agencies", label: "Agencies", icon: UserCog, badge: agencies.length },
     { key: "agents", label: "Agents", icon: BadgeCheck, badge: unverifiedAgents, attention: unverifiedAgents > 0 },
   ];
   const activeTab = TABS.find((t) => t.key === tab) || TABS[0];
@@ -4597,7 +4973,7 @@ function AdminConsole({ theme, setTheme, onExit, adminName, listings, onUpdateLi
               <AdminOverview
                 listings={listings}
                 agents={agents}
-                admins={admins}
+                agencies={agencies}
                 stats={stats}
                 lastUpdated={lastUpdated}
                 adminName={adminName}
@@ -4607,10 +4983,19 @@ function AdminConsole({ theme, setTheme, onExit, adminName, listings, onUpdateLi
               />
             )}
             {tab === "listings" && <AdminListingsPanel listings={listings} onUpdateListings={onUpdateListings} onToast={showToast} adminName={adminName} openForm={Boolean(tabIntent && tabIntent.openForm)} />}
-            {tab === "admins" && (
-              <AdminAdminsPanel admins={admins} onUpdateAdmins={onUpdateAdmins} onToast={showToast} listings={listings} agents={agents} />
+            {tab === "agencies" && (
+              <AgenciesPanel agencies={agencies} onUpdateAgencies={onUpdateAgencies} onToast={showToast} listings={listings} agents={agents} />
             )}
-            {tab === "agents" && <AdminAgentsPanel agents={agents} onUpdateAgents={onUpdateAgents} onToast={showToast} admins={admins} />}
+            {tab === "agents" && (
+              <AdminAgentsPanel
+                agents={agents}
+                onUpdateAgents={onUpdateAgents}
+                onToast={showToast}
+                agencies={agencies}
+                agentLogins={agentLogins}
+                onUpdateAgentLogins={onUpdateAgentLogins}
+              />
+            )}
           </div>
         </main>
       </div>
@@ -4664,10 +5049,11 @@ export default function App() {
   const firstPageRender = useRef(true);
   useDialogFocus(authOpen, authDialogRef);
   useDialogFocus(menuOpen, drawerRef);
-  // No seed data — listings are added exclusively by admins/superadmins via their dashboards.
+  // No seed data — listings are added only by the superadmin, agencies and agents via their dashboards.
   const [listings, setListings] = useState([]);
   const [agents, setAgents] = useState(AGENTS);
-  const [admins, setAdmins] = useState([]);
+  const [agencies, setAgencies] = useState([]);
+  const [agentLogins, setAgentLogins] = useState([]);
   const [staffState, setStaffState] = useState("unknown");
   const [mfaFactorId, setMfaFactorId] = useState("");
   const [mfaTick, setMfaTick] = useState(0);
@@ -4678,10 +5064,12 @@ export default function App() {
   const [syncError, setSyncError] = useState("");
   const listingsRef = useRef([]);
   const agentListRef = useRef([]);
-  const adminListRef = useRef([]);
+  const agencyListRef = useRef([]);
+  const agentLoginListRef = useRef([]);
   listingsRef.current = listings;
   agentListRef.current = agents;
-  adminListRef.current = admins;
+  agencyListRef.current = agencies;
+  agentLoginListRef.current = agentLogins;
   const refreshRemoteRef = useRef(null);
 
   const pendingStatsRef = useRef({});
@@ -4773,7 +5161,7 @@ export default function App() {
   }, []);
 
   // Hydrate listings from persistent storage (shared across everyone using this site).
-  // Starts empty on first-ever load — real listings come only from admins/superadmins.
+  // Starts empty on first-ever load — real listings come only from the superadmin, agencies and agents.
   useEffect(() => {
     if (REMOTE) return undefined;
     let cancelled = false;
@@ -4826,10 +5214,12 @@ export default function App() {
 
   const refreshRemote = async () => {
     try {
-      const data = await fetchRemoteData(Boolean(currentUser && currentUser.role === "superadmin"), Boolean(currentUser));
+      // Agents sign in as staff too, but only agencies and the superadmin get the private agent notes and logins.
+      const data = await fetchRemoteData(Boolean(currentUser && currentUser.role === "superadmin"), Boolean(currentUser && currentUser.role !== "agent"));
       setListings(data.listings);
       setAgents(data.agents);
-      if (data.admins) setAdmins(data.admins);
+      if (data.agencies) setAgencies(data.agencies);
+      if (data.agentLogins) setAgentLogins(data.agentLogins);
     } catch (e) {
       /* keep what is on screen */
     } finally {
@@ -4891,10 +5281,10 @@ export default function App() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await window.storage.get(STORAGE_KEYS.admins, true);
-        if (!cancelled && res && res.value) setAdmins(JSON.parse(res.value));
+        const res = await window.storage.get(STORAGE_KEYS.agencies, true);
+        if (!cancelled && res && res.value) setAgencies(JSON.parse(res.value));
       } catch (e) {
-        /* no admins saved yet — continue with empty list */
+        /* no agencies saved yet — continue with empty list */
       }
     })();
     return () => {
@@ -4902,13 +5292,19 @@ export default function App() {
     };
   }, []);
 
-  const updateAdmins = (next) => {
+  const updateAgencies = (next) => {
     if (REMOTE) {
-      remoteUpdate("staff", adminListRef, setAdmins, next, staffToRow);
+      remoteUpdate("staff", agencyListRef, setAgencies, next, staffToRow);
       return;
     }
-    setAdmins(next);
-    window.storage?.set(STORAGE_KEYS.admins, JSON.stringify(next), true).catch(() => {});
+    setAgencies(next);
+    window.storage?.set(STORAGE_KEYS.agencies, JSON.stringify(next), true).catch(() => {});
+  };
+
+  // Agent logins only exist on the live (Supabase) site.
+  const updateAgentLogins = (next) => {
+    if (!REMOTE) return;
+    remoteUpdate("agent_logins", agentLoginListRef, setAgentLogins, next, agentLoginToRow);
   };
 
   // Real usage tracking: increments are batched in memory and flushed to shared
@@ -5442,8 +5838,23 @@ export default function App() {
       try {
         const session = await getValidSession();
         if (!session) return;
-        const profile = await sbRequest("/rest/v1/rpc/my_staff_profile", { method: "POST", token: session.access_token, body: {} });
+        let profile = await sbRequest("/rest/v1/rpc/my_staff_profile", { method: "POST", token: session.access_token, body: {} });
         if (cancelled) return;
+        let isAgentLogin = false;
+        if (!(profile && profile.role)) {
+          // Not an agency or superadmin. An agent has a login of their own; if the database doesn't know this
+          // email as an agent either (or the update hasn't been applied yet), they are an ordinary account.
+          try {
+            const agentProfile = await sbRequest("/rest/v1/rpc/my_agent_profile", { method: "POST", token: session.access_token, body: {} });
+            if (agentProfile && agentProfile.role === "agent") {
+              profile = agentProfile;
+              isAgentLogin = true;
+            }
+          } catch (e) {
+            profile = null;
+          }
+          if (cancelled) return;
+        }
         if (!(profile && profile.role)) {
           setCurrentUser(null);
           setStaffState("none");
@@ -5468,14 +5879,15 @@ export default function App() {
           return;
         }
         const isSuper = profile.role === "superadmin";
+        // The database calls an agency "admin"; on the site it is an "agency".
         setCurrentUser({
           name: displayNameFor(account.email, profile.name, account.name),
           avatar: account.avatar || "",
           email: account.email,
           isSuperAdmin: isSuper,
-          role: isSuper ? "superadmin" : "admin",
+          role: isSuper ? "superadmin" : isAgentLogin ? "agent" : "agency",
           agency: profile.agency || "",
-          adminId: profile.id,
+          staffId: profile.id,
           mfa: factors.length > 0,
         });
         setStaffState("staff");
@@ -5648,19 +6060,32 @@ export default function App() {
             onUpdateListings={updateListings}
             agents={agents}
             onUpdateAgents={updateAgents}
-            admins={admins}
-            onUpdateAdmins={updateAdmins}
+            agencies={agencies}
+            onUpdateAgencies={updateAgencies}
+            agentLogins={agentLogins}
+            onUpdateAgentLogins={REMOTE ? updateAgentLogins : undefined}
           />
-        ) : currentUser?.role === "admin" ? (
-          <AgencyAdminConsole
+        ) : currentUser?.role === "agency" ? (
+          <AgencyConsole
             theme={theme}
             setTheme={setTheme}
             onExit={goHome}
-            currentAdmin={currentUser}
+            currentAgency={currentUser}
             listings={listings}
             onUpdateListings={updateListings}
             agents={agents}
             onUpdateAgents={updateAgents}
+            agentLogins={agentLogins}
+            onUpdateAgentLogins={REMOTE ? updateAgentLogins : undefined}
+          />
+        ) : currentUser?.role === "agent" ? (
+          <AgentConsole
+            theme={theme}
+            setTheme={setTheme}
+            onExit={goHome}
+            currentAgent={currentUser}
+            listings={listings}
+            onUpdateListings={updateListings}
           />
         ) : (
 REMOTE ? (
@@ -5693,7 +6118,7 @@ import.meta.env.PROD ? (
             </div>
           </div>
         ) : (
-          <StaffGate admins={admins} onAuthenticate={(user) => { setCurrentUser(user); }} onExit={goHome} />
+          <StaffGate agencies={agencies} onAuthenticate={(user) => { setCurrentUser(user); }} onExit={goHome} />
         )
         )
         )
@@ -5742,7 +6167,7 @@ import.meta.env.PROD ? (
             </button>
             {currentUser ? (
               <>
-                {(currentUser.isSuperAdmin || currentUser.role === "admin") && (
+                {isStaffUser(currentUser) && (
                   <button className="pk-btn-outline" onClick={() => setPage("admin")}>
                     <Shield size={15} /> Dashboard
                   </button>
@@ -5839,7 +6264,7 @@ import.meta.env.PROD ? (
         <div className="px-6 pb-8 pt-4 flex flex-col gap-3">
           {currentUser ? (
             <>
-              {(currentUser.isSuperAdmin || currentUser.role === "admin") && (
+              {isStaffUser(currentUser) && (
                 <button className="pk-btn-outline justify-center" onClick={() => { setPage("admin"); setMenuOpen(false); }}>
                   <Shield size={15} /> Dashboard
                 </button>

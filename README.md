@@ -18,7 +18,14 @@ You need Node.js 18 or newer (nodejs.org, the LTS version) and Git.
 4. Run supabase-setup.sql once in Supabase (SQL Editor). It needs no editing.
 5. Then run supabase-account-wall.sql once too. It makes listing details (description, amenities, contact) readable only by signed-in users, so the sign-up wall can't be bypassed. Safe to run again.
 6. Run supabase-profile-photos.sql once as well. It lets each signed-in person save their own profile photo (and only their own).
-7. To make someone a super admin on the live site, run supabase-add-superadmin.sql in Supabase (edit the email inside first). They must sign up with that email first.
+7. Run supabase-agents-and-agencies.sql once too. It lets agents sign in to add and remove their own listings, and lets each agency see and edit every listing its agents post. Safe to run again. Until you run it, the site works as before and agent logins simply don't work yet.
+8. To make someone a super admin on the live site, run supabase-add-superadmin.sql in Supabase (edit the email inside first). They must sign up with that email first.
+
+Who can do what
+- Superadmin: everything. Adds agencies (the Agencies tab), reviews and approves listings, verifies agents.
+- Agency: adds listings, sees every listing posted under it (its own and its agents'), filters by who posted it, and edits or removes any of them. Adds its own agents and can give each one a login.
+- Agent: signs in with the login email their agency gave them (create an account with that email, confirm it, then Staff sign in). Adds listings and removes their own. Sees only their own.
+- Listings from agencies and agents always start as "Pending" until the superadmin approves them; editing never changes that.
 
 Every time you push to GitHub, Cloudflare rebuilds and publishes the site in about a minute.
 
@@ -27,6 +34,7 @@ Every time you push to GitHub, Cloudflare rebuilds and publishes the site in abo
 - supabase-account-wall.sql: the database rule behind the sign-up wall
 - supabase-profile-photos.sql: lets each person save their own profile photo
 - supabase-add-superadmin.sql: makes an email a super admin (and shows the super admin count)
+- supabase-agents-and-agencies.sql: agent logins, and the rules for who can add, edit and remove which listings
 - _worker.js, _routes.json: share previews, sitemap and robots (Cloudflare)
 - _headers, _redirects, vercel.json: security settings and page addresses
 - index.html, favicon and icons, og-image.jpg, logo files: the page shell and branding
