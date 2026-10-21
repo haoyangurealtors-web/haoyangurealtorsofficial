@@ -3126,9 +3126,11 @@ function RemoteStaffGate({ account, staffState, onLogin, onVerifyCode, onMfaDone
         <h1 className="pk-display text-2xl font-semibold mb-1">Staff sign in</h1>
         <p className="pk-ink-soft text-sm mb-6">For authorised staff only.</p>
         {body}
-        <button className="pk-admin-gate-back" onClick={onExit}>
-          ← Back to site
-        </button>
+        {onExit && (
+          <button className="pk-admin-gate-back" onClick={onExit}>
+            ← Back to site
+          </button>
+        )}
       </div>
     </div>
   );
@@ -4734,7 +4736,7 @@ function StaffConsoleShell({ theme, setTheme, onExit, title, subtitle, tabs, tab
             {theme === "light" ? <Moon size={16} /> : <Sun size={16} />}
           </button>
           <button className="pk-btn-outline" onClick={onExit}>
-            <LogOut size={15} /> Exit to site
+            <LogOut size={15} /> Log out
           </button>
         </div>
       </div>
@@ -4938,7 +4940,7 @@ function AdminConsole({ theme, setTheme, onExit, adminName, listings, onUpdateLi
             {theme === "light" ? <Moon size={16} /> : <Sun size={16} />}
           </button>
           <button className="pk-btn-outline" onClick={onExit}>
-            <LogOut size={15} /> Exit to site
+            <LogOut size={15} /> Log out
           </button>
         </div>
       </div>
@@ -5115,7 +5117,8 @@ export default function App() {
     };
   }, []);
   useEffect(() => {
-    if (splashMinDone && ((dataReady && (authChecked || !AUTH_ENABLED)) || splashCapped)) {
+    const staffPending = REMOTE && Boolean(account) && staffState === "unknown";
+    if (splashMinDone && ((dataReady && (authChecked || !AUTH_ENABLED) && !staffPending) || splashCapped)) {
       setAppLoading(false);
       try {
         window.sessionStorage.setItem(SPLASH_KEY, "1");
@@ -5123,7 +5126,7 @@ export default function App() {
         /* ignore */
       }
     }
-  }, [splashMinDone, splashCapped, dataReady, authChecked]);
+  }, [splashMinDone, splashCapped, dataReady, authChecked, account, staffState]);
 
   useEffect(() => {
     if (!appLoading) {
@@ -5364,6 +5367,27 @@ export default function App() {
     ref?.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
+  // Superadmins, agencies and agents live in their own dashboard. As soon as one of them is signed in (or is
+  // waiting at the two-step code screen) the public site is never shown to them; they are taken straight to
+  // their dashboard and stay there until they log out. Ordinary visitors and customers are not affected.
+  const staffLockedIn =
+    Boolean(currentUser && isStaffUser(currentUser)) ||
+    (REMOTE && Boolean(account) && (staffState === "mfa-code" || staffState === "mfa-enrol"));
+  // Signed in, but the database hasn't yet said who this is: show a short "signing you in" screen
+  // instead of flashing the public site and then jumping to the dashboard.
+  const checkingStaff = REMOTE && Boolean(account) && staffState === "unknown";
+  const effectivePage = staffLockedIn ? "admin" : page;
+  const staffLockedRef = useRef(false);
+  staffLockedRef.current = staffLockedIn;
+  useEffect(() => {
+    if (staffLockedIn && page !== "admin") {
+      setPage("admin");
+      setScrollTarget("top");
+      setMenuOpen(false);
+      setAuthOpen(false);
+    }
+  }, [staffLockedIn, page]);
+
   const goHome = () => {
     setPage("home");
     setScrollTarget("top");
@@ -5544,6 +5568,12 @@ export default function App() {
     if (ord && SORT_OPTIONS.includes(ord)) setSortBy(ord);
   };
   const applyPath = (path, search = "") => {
+    if (staffLockedRef.current) {
+      setPage("admin");
+      setScrollTarget("top");
+      if (window.location.pathname !== "/admin") window.history.replaceState(null, "", "/admin");
+      return;
+    }
     const clean = path.replace(/\/+$/, "") || "/";
     const detail = clean.match(/^\/listing\/(\d+)$/);
     if (detail) {
@@ -5660,11 +5690,9 @@ export default function App() {
     return sorted;
   }, [approvedListings, listingCategory, location, secondary, budget, sortBy]);
 
-  const homeFeatured = useMemo(() => {
-    const promoted = approvedListings.filter(isFeatured);
-    const rest = approvedListings.filter((l) => !isFeatured(l));
-    return [...promoted, ...rest].slice(0, 8);
-  }, [approvedListings]);
+  // The "Featured listings" section on the home page shows featured (promoted) listings only, newest first.
+  // Ordinary listings are never used to fill it; they are all under "View all" and the category pages.
+  const homeFeatured = useMemo(() => approvedListings.filter(isFeatured).sort((a, b) => b.id - a.id).slice(0, 8), [approvedListings]);
 
   // The home carousel shows promoted (featured) listings only: newest first, at most five.
   const heroFeatured = useMemo(() => approvedListings.filter(isFeatured).sort((a, b) => b.id - a.id).slice(0, 5), [approvedListings]);
@@ -5683,7 +5711,7 @@ export default function App() {
     else if (page === "terms") title = `Terms of Use | ${base}`;
     else if (page === "verification") title = `What Verified means | ${base}`;
     else if (page === "profile") title = `Saved properties | ${base}`;
-    else if (page === "admin") title = `Staff sign in | ${base}`;
+    else if (page === "admin") title = currentUser && isStaffUser(currentUser) ? `Dashboard | ${base}` : `Staff sign in | ${base}`;
     else if (page === "detail" && selectedProperty) {
       title = `${selectedProperty.title}, ${selectedProperty.location} | ${base}`;
       desc = (selectedProperty.description || "").slice(0, 155) || desc;
@@ -5691,7 +5719,7 @@ export default function App() {
     document.title = title;
     const meta = document.querySelector('meta[name="description"]');
     if (meta) meta.setAttribute("content", desc);
-  }, [page, listingCategory, selectedProperty]);
+  }, [page, listingCategory, selectedProperty, currentUser && currentUser.role]);
   const similarProperties = useMemo(() => {
     if (!selectedProperty) return [];
     return approvedListings.filter((p) => p.tag === selectedProperty.tag && p.id !== selectedProperty.id).slice(0, 3);
@@ -5837,7 +5865,10 @@ export default function App() {
     (async () => {
       try {
         const session = await getValidSession();
-        if (!session) return;
+        if (!session) {
+          if (!cancelled) setStaffState("none");
+          return;
+        }
         let profile = await sbRequest("/rest/v1/rpc/my_staff_profile", { method: "POST", token: session.access_token, body: {} });
         if (cancelled) return;
         let isAgentLogin = false;
@@ -6049,13 +6080,20 @@ export default function App() {
 
       {showLoader && <LoadingScreen fadingOut={!appLoading} />}
 
-      {page === "admin" ? (
+      {checkingStaff && !showLoader && (
+        <div role="status" aria-live="polite" style={{ position: "fixed", inset: 0, zIndex: 900, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14, background: "var(--bg)", color: "var(--ink)" }}>
+          <LogoMark size={44} />
+          <p className="pk-ink-soft text-sm">Signing you in…</p>
+        </div>
+      )}
+
+      {effectivePage === "admin" ? (
         currentUser?.role === "superadmin" ? (
           <AdminConsole
             theme={theme}
             setTheme={setTheme}
             adminName={currentUser?.name}
-            onExit={goHome}
+            onExit={handleLogout}
             listings={listings}
             onUpdateListings={updateListings}
             agents={agents}
@@ -6069,7 +6107,7 @@ export default function App() {
           <AgencyConsole
             theme={theme}
             setTheme={setTheme}
-            onExit={goHome}
+            onExit={handleLogout}
             currentAgency={currentUser}
             listings={listings}
             onUpdateListings={updateListings}
@@ -6082,7 +6120,7 @@ export default function App() {
           <AgentConsole
             theme={theme}
             setTheme={setTheme}
-            onExit={goHome}
+            onExit={handleLogout}
             currentAgent={currentUser}
             listings={listings}
             onUpdateListings={updateListings}
@@ -6098,7 +6136,7 @@ REMOTE ? (
             onVerifyCode={handleMfaCode}
             onMfaDone={handleMfaDone}
             onLogout={handleAccountLogout}
-            onExit={goHome}
+            onExit={staffLockedIn ? undefined : goHome}
           />
         ) : (
 import.meta.env.PROD ? (
@@ -6437,10 +6475,11 @@ import.meta.env.PROD ? (
       </section>
 
       {/* ---------------- FEATURED PROPERTIES ---------------- */}
+      {(approvedListings.length === 0 || homeFeatured.length > 0) && (
       <section ref={featuredRef} className="mx-auto max-w-7xl px-4 md:px-8 pb-8 md:pb-16">
         <div className="flex items-end justify-between mb-3 md:mb-6 gap-4">
           <div>
-            <p className="pk-mono text-xs pk-ink-soft uppercase tracking-wide mb-1">{approvedListings.some(isFeatured) ? "Featured and latest" : "Latest"}</p>
+            <p className="pk-mono text-xs pk-ink-soft uppercase tracking-wide mb-1">Promoted</p>
             <h2 className="pk-display text-xl md:text-3xl font-semibold">Featured listings</h2>
           </div>
           {approvedListings.length > 0 && (
@@ -6484,6 +6523,7 @@ import.meta.env.PROD ? (
           </>
         )}
       </section>
+      )}
 
       {/* ---------------- HOW IT WORKS ---------------- */}
       <section className="mx-auto max-w-7xl px-4 md:px-8 pb-8 md:pb-16">

@@ -26,6 +26,7 @@ Who can do what
 - Agency: adds listings, sees every listing posted under it (its own and its agents'), filters by who posted it, and edits or removes any of them. Adds its own agents and can give each one a login.
 - Agent: signs in with the login email their agency gave them (create an account with that email, confirm it, then Staff sign in). Adds listings and removes their own. Sees only their own.
 - Listings from agencies and agents always start as "Pending" until the superadmin approves them; editing never changes that.
+- After signing in or signing up, superadmins, agencies and agents go straight to their own dashboard and see only that: the public site is not shown to them. The button in the top corner of their dashboard is "Log out". Everyone else (visitors and ordinary customers) sees the normal site.
 
 Every time you push to GitHub, Cloudflare rebuilds and publishes the site in about a minute.
 
