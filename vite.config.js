@@ -12,6 +12,7 @@ const topLevelFiles = [
   "apple-touch-icon.png",
   "og-image.jpg",
   "site.webmanifest",
+  "theme-init.js",
   "_worker.js",
   "_routes.json",
 ];

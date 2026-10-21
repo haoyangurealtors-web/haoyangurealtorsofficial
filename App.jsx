@@ -50,6 +50,7 @@ import {
   Sparkles,
   Pencil,
   Camera,
+  MessageCircle,
 } from "lucide-react";
 import AdminOverview from "./AdminOverview.jsx";
 
@@ -1043,7 +1044,7 @@ function StatItem({ stat }) {
         {display}
         {stat.suffix}
       </div>
-      <div className="pk-ink-soft text-sm mt-1">{stat.label}</div>
+      <div className="pk-stat-label">{stat.label}</div>
     </div>
   );
 }
@@ -1133,7 +1134,7 @@ function PropertyCard({ property, isFavorite, onToggleFavorite, onSelect, style 
           <Heart size={16} color={isFavorite ? "#603838" : "#1E1D2F"} fill={isFavorite ? "#603838" : "none"} />
         </button>
       </div>
-      <div className="p-4">
+      <div className="p-3 md:p-4">
         <div className="pk-mono pk-prop-price pk-primary-text">
           {property.price}
           <span className="text-sm pk-ink-soft font-normal">{property.period}</span>
@@ -1156,7 +1157,7 @@ function PropertyCard({ property, isFavorite, onToggleFavorite, onSelect, style 
         <p className="pk-ink-soft text-sm flex items-center gap-1 mt-1">
           <MapPin size={13} /> {property.location}
         </p>
-        <div className="flex items-center gap-3 mt-3 pt-3 text-sm pk-ink-soft" style={{ borderTop: "1px solid var(--border)" }}>
+        <div className="flex items-center gap-3 mt-2 pt-2 text-sm pk-ink-soft" style={{ borderTop: "1px solid var(--border)" }}>
           {property.beds != null && (
             <span className="flex items-center gap-1"><Bed size={14} /> {property.beds}</span>
           )}
@@ -1755,6 +1756,19 @@ function Avatar({ name, src, size = 48 }) {
   return <InitialsAvatar name={name} size={size} />;
 }
 
+const TAG_LABELS = { Buy: "For sale", Rent: "For rent", Commercial: "Commercial", Land: "Land" };
+
+// Builds a WhatsApp chat link from a phone number. Kenyan numbers like 0712 345 678 become 254712345678.
+function whatsappLink(phone, text) {
+  let d = String(phone || "").replace(/\D/g, "");
+  if (d.startsWith("00")) d = d.slice(2);
+  else if (d.startsWith("0")) d = "254" + d.slice(1);
+  else if (/^[17]\d{8}$/.test(d)) d = "254" + d;
+  if (d.length < 10 || d.length > 15) return null;
+  return `https://wa.me/${d}?text=${encodeURIComponent(text)}`;
+}
+const telHref = (phone) => `tel:${String(phone || "").replace(/[^\d+]/g, "")}`;
+
 function PropertyDetailPage({
   property,
   category,
@@ -1767,11 +1781,26 @@ function PropertyDetailPage({
   onOpenModal,
 }) {
   const isFavorite = favorites.has(property.id);
-  const contact = property.contact;
+  const contact = property.contact || {};
+  const phone = String(contact.phone || "").trim();
+  const agentPhone = String(contact.agentPhone || "").trim();
+  const email = String(contact.email || "").trim();
+  const ref = `HY-${String(property.id).padStart(4, "0")}`;
+  const askText = `Hello, I'm interested in "${property.title}" (${property.location}, Ref ${ref}) on ${SITE_CONFIG.name}.`;
+  const whatsapp = whatsappLink(phone, askText);
+  const agentWhatsapp = whatsappLink(agentPhone, askText);
+  const amenities = Array.isArray(property.amenities) ? property.amenities : [];
+  const description = String(property.description || "").trim();
+
+  const facts = [];
+  if (property.beds != null) facts.push({ icon: Bed, label: "Bedrooms", value: property.beds });
+  if (property.baths != null) facts.push({ icon: Bath, label: "Bathrooms", value: property.baths });
+  if (property.size && property.size !== "—") facts.push({ icon: Ruler, label: property.tag === "Land" ? "Plot size" : "Size", value: property.size });
+  if (property.spaceType) facts.push({ icon: Building2, label: "Space type", value: property.spaceType });
 
   return (
-    <section className="mx-auto max-w-7xl px-4 md:px-8 pt-8 md:pt-12 pb-20">
-      <p className="pk-mono text-xs uppercase tracking-wide mb-3 pk-breadcrumb">
+    <section className="mx-auto max-w-7xl px-4 md:px-8 pt-5 md:pt-10 pb-28 lg:pb-20">
+      <p className="pk-mono text-xs uppercase tracking-wide pk-breadcrumb">
         <button onClick={onBackHome} className="pk-primary-text font-semibold">Home</button>
         <span className="pk-ink-soft"> / </span>
         <button onClick={onBackCategory} className="pk-primary-text font-semibold">{LISTING_META[category].label}</button>
@@ -1779,17 +1808,16 @@ function PropertyDetailPage({
       </p>
 
       <div className="pk-detail-grid">
-        <div>
+        <div className="pk-detail-head">
           <div className="pk-detail-media">
-            <ImageWithFallback src={property.img} alt={property.title} className="pk-detail-media-img" iconFallback={HomeIcon} />
-            <span className="pk-prop-tag">{isFeatured(property) ? "Featured" : property.tag}</span>
+            <ImageWithFallback src={property.img} alt={property.title} className="pk-detail-media-img" iconFallback={HomeIcon} eager />
           </div>
 
-          <div className="flex items-start justify-between gap-4 mt-6">
-            <div>
-              <h1 className="pk-display text-2xl md:text-4xl font-semibold mb-2">{property.title}</h1>
-              <p className="pk-ink-soft flex items-center gap-1">
-                <MapPin size={15} /> {property.location}
+          <div className="flex items-start justify-between gap-3 mt-4">
+            <div className="min-w-0">
+              <h1 className="pk-display text-xl md:text-3xl font-semibold leading-tight mb-1">{property.title}</h1>
+              <p className="pk-ink-soft text-sm flex items-center gap-1">
+                <MapPin size={14} className="flex-shrink-0" /> {property.location}
               </p>
             </div>
             <button
@@ -1801,35 +1829,139 @@ function PropertyDetailPage({
             </button>
           </div>
 
-          <div className="pk-detail-facts">
-            {property.beds != null && (
-              <span><Bed size={16} /> {property.beds} Bedrooms</span>
-            )}
-            {property.baths != null && (
-              <span><Bath size={16} /> {property.baths} Bathrooms</span>
-            )}
-            <span><Ruler size={16} /> {property.size}</span>
+          <div className="pk-detail-pricebar">
+            <span className="pk-mono pk-primary-text pk-detail-price lg:hidden">
+              {property.price}
+              <span className="text-sm pk-ink-soft font-normal">{property.period}</span>
+            </span>
+            <span className="pk-chip-tag">{TAG_LABELS[property.tag] || property.tag}</span>
+            {isFeatured(property) && <span className="pk-chip-tag pk-chip-tag-featured">Featured</span>}
           </div>
 
-          <div className="pk-detail-section">
-            <h2 className="pk-display text-xl font-semibold mb-3">About this property</h2>
-            <p className="pk-ink-soft leading-relaxed">{property.description}</p>
-          </div>
+          {facts.length > 0 && (
+            <div className="pk-facts-grid">
+              {facts.map((f) => {
+                const FactIcon = f.icon;
+                return (
+                  <div key={f.label} className="pk-fact">
+                    <FactIcon size={18} />
+                    <div className="min-w-0">
+                      <strong>{f.value}</strong>
+                      <small>{f.label}</small>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
 
-          <div className="pk-detail-section">
-            <h2 className="pk-display text-xl font-semibold mb-3">Features</h2>
-            <ul className="pk-amenity-list">
-              {property.amenities.map((a) => (
-                <li key={a}>
-                  <Check size={15} className="pk-primary-text" /> {a}
-                </li>
-              ))}
-            </ul>
+        <aside className="pk-detail-sidebar" aria-label="Contact details">
+          <div className="pk-contact-card">
+            <div className="pk-mono pk-primary-text hidden lg:block mb-3" style={{ fontSize: "1.7rem", fontWeight: 600 }}>
+              {property.price}
+              <span className="text-sm pk-ink-soft font-normal">{property.period}</span>
+            </div>
+
+            <p className="pk-contact-kicker">Listed by</p>
+            <div className="pk-contact-person">
+              {contact.avatar ? (
+                <ImageWithFallback src={contact.avatar} alt={contact.name} className="pk-agent-photo" iconFallback={Users} />
+              ) : (
+                <InitialsAvatar name={contact.name} size={48} />
+              )}
+              <div className="min-w-0">
+                <div className="font-semibold leading-tight">{contact.name}</div>
+                {contact.role && <div className="pk-contact-role">{contact.role}</div>}
+                {property.agency && <div className="pk-ink-soft text-xs">{property.agency}</div>}
+              </div>
+            </div>
+
+            {/* Phones: the numbers as tap-to-call lines (the Call and WhatsApp buttons live in the bar at the bottom of the screen) */}
+            <div className="pk-contact-lines lg:hidden">
+              {phone ? (
+                <a href={telHref(phone)}>
+                  <Phone size={15} />
+                  <span>{phone}</span>
+                  <em>Call</em>
+                </a>
+              ) : (
+                <p className="pk-ink-soft text-sm">No phone number was added for this property. Please use email.</p>
+              )}
+              {agentPhone && (
+                <a href={telHref(agentPhone)}>
+                  <Users size={15} />
+                  <span>{agentPhone}</span>
+                  <em>Agent</em>
+                </a>
+              )}
+              {email && (
+                <a href={`mailto:${email}?subject=${encodeURIComponent(`Enquiry: ${property.title} (Ref ${ref})`)}`}>
+                  <Mail size={15} />
+                  <span>{email}</span>
+                  <em>Email</em>
+                </a>
+              )}
+            </div>
+
+            {/* Larger screens: full-width buttons */}
+            <div className="pk-contact-actions hidden lg:flex">
+              {phone ? (
+                <a className="pk-btn-primary justify-center" href={telHref(phone)}>
+                  <Phone size={15} /> Call {phone}
+                </a>
+              ) : (
+                <p className="pk-ink-soft text-sm">No phone number was added for this property. Please use email.</p>
+              )}
+              {whatsapp && (
+                <a className="pk-btn-wa justify-center" href={whatsapp} target="_blank" rel="noopener noreferrer">
+                  <MessageCircle size={15} /> WhatsApp
+                </a>
+              )}
+              {agentPhone && (
+                <a className="pk-btn-outline justify-center" href={agentWhatsapp || telHref(agentPhone)} {...(agentWhatsapp ? { target: "_blank", rel: "noopener noreferrer" } : {})}>
+                  <Users size={15} /> Agent number: {agentPhone}
+                </a>
+              )}
+              {email && (
+                <a className="pk-btn-outline justify-center" href={`mailto:${email}?subject=${encodeURIComponent(`Enquiry: ${property.title} (Ref ${ref})`)}`}>
+                  <Mail size={15} /> Email
+                </a>
+              )}
+            </div>
+
+            <p className="pk-ink-soft text-xs mt-3 text-center leading-relaxed">
+              <ShieldCheck size={13} className="inline-block mr-1" style={{ verticalAlign: "-2px" }} />
+              Always view a property in person before making any payment.
+            </p>
+            <p className="pk-contact-ref pk-mono">Ref {ref}</p>
           </div>
+        </aside>
+
+        <div className="pk-detail-body">
+          {description && (
+            <div className="pk-detail-section" style={{ marginTop: 6 }}>
+              <h2 className="pk-display text-lg md:text-xl font-semibold mb-2">About this property</h2>
+              <p className="pk-ink-soft leading-relaxed text-sm md:text-base">{description}</p>
+            </div>
+          )}
+
+          {amenities.length > 0 && (
+            <div className="pk-detail-section">
+              <h2 className="pk-display text-lg md:text-xl font-semibold mb-2">Features</h2>
+              <ul className="pk-amenity-list">
+                {amenities.map((a) => (
+                  <li key={a}>
+                    <Check size={15} className="pk-primary-text" /> {a}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           {similar.length > 0 && (
             <div className="pk-detail-section">
-              <h2 className="pk-display text-xl font-semibold mb-4">Similar listings</h2>
+              <h2 className="pk-display text-lg md:text-xl font-semibold mb-3">Similar listings</h2>
               <div className="pk-listing-grid" style={{ marginTop: 0 }}>
                 {similar.map((p) => (
                   <PropertyCard
@@ -1844,44 +1976,22 @@ function PropertyDetailPage({
             </div>
           )}
         </div>
-
-        <aside className="pk-detail-sidebar">
-          <div className="pk-contact-card">
-            <div className="pk-mono pk-primary-text" style={{ fontSize: "1.7rem", fontWeight: 600 }}>
-              {property.price}
-              <span className="text-sm pk-ink-soft font-normal">{property.period}</span>
-            </div>
-
-            <div className="pk-contact-person">
-              {contact.avatar ? (
-                <ImageWithFallback src={contact.avatar} alt={contact.name} className="pk-agent-photo" iconFallback={Users} />
-              ) : (
-                <InitialsAvatar name={contact.name} />
-              )}
-              <div>
-                <div className="font-semibold">{contact.name}</div>
-                <div className="pk-primary-text text-xs font-semibold">{contact.role}</div>
-              </div>
-            </div>
-
-            <div className="pk-contact-actions">
-              {contact.phone && (
-                <a className="pk-btn-primary justify-center" href={`tel:${contact.phone.replace(/\s+/g, "")}`}>
-                  <Phone size={15} /> {contact.phone}
-                </a>
-              )}
-              <a className="pk-btn-outline justify-center" href={`mailto:${contact.email}`}>
-                <Mail size={15} /> Email
-              </a>
-            </div>
-
-            <p className="pk-ink-soft text-xs mt-4 text-center leading-relaxed">
-              <ShieldCheck size={13} className="inline-block mr-1" style={{ verticalAlign: "-2px" }} />
-              Always view a property in person before making any payment.
-            </p>
-          </div>
-        </aside>
       </div>
+
+      {(phone || whatsapp) && (
+        <div className="pk-contact-bar">
+          {phone && (
+            <a className="pk-btn-primary" href={telHref(phone)}>
+              <Phone size={16} /> Call
+            </a>
+          )}
+          {whatsapp && (
+            <a className="pk-btn-wa" href={whatsapp} target="_blank" rel="noopener noreferrer">
+              <MessageCircle size={16} /> WhatsApp
+            </a>
+          )}
+        </div>
+      )}
     </section>
   );
 }
@@ -3088,6 +3198,7 @@ const EMPTY_LISTING_FORM = {
   contactName: "",
   contactRole: "Property Owner",
   contactPhone: "",
+  contactAgentPhone: "",
   contactEmail: "",
 };
 
@@ -3133,6 +3244,7 @@ function buildListingFromForm(form, nextId) {
       name: form.contactName.trim() || "Hao yangu realtors Team",
       role: form.contactRole,
       phone: form.contactPhone.trim(),
+      ...(form.contactAgentPhone.trim() ? { agentPhone: form.contactAgentPhone.trim() } : {}),
       email: form.contactEmail.trim() || SITE_CONFIG.contactEmail,
     },
   };
@@ -3332,6 +3444,14 @@ function ListingForm({ onSubmit, submitLabel = "Publish listing" }) {
             onChange={(e) => setForm({ ...form, contactPhone: e.target.value })}
             placeholder="+254 7xx xxx xxx"
             required
+          />
+        </label>
+        <label>
+          Agent number (optional)
+          <input
+            value={form.contactAgentPhone}
+            onChange={(e) => setForm({ ...form, contactAgentPhone: e.target.value })}
+            placeholder="If different from the phone above"
           />
         </label>
         <label>
@@ -5829,27 +5949,32 @@ import.meta.env.PROD ? (
 
       {/* ---------------- STATS ---------------- */}
       {approvedListings.length > 0 && (
-      <section className="mx-auto max-w-7xl px-4 md:px-8 pb-14 md:pb-20">
+      <section className="mx-auto max-w-7xl px-4 md:px-8 pb-7 md:pb-12">
         <div className="pk-stats-band">
-          <Roofline className="pk-stats-line" />
-          <div className="pk-stats-grid pk-stats-grid-3">
-            {liveStats.map((s) => (
-              <StatItem key={s.label} stat={s} />
-            ))}
-          </div>
+          {(() => {
+            // A stat that is still zero (for example verified agents) is left out rather than shown as "0".
+            const shown = liveStats.filter((st) => st.target > 0);
+            return (
+              <div className="pk-stats-grid" style={{ gridTemplateColumns: `repeat(${Math.max(shown.length, 1)}, 1fr)` }}>
+                {shown.map((st) => (
+                  <StatItem key={st.label} stat={st} />
+                ))}
+              </div>
+            );
+          })()}
         </div>
       </section>
       )}
 
       {/* ---------------- CATEGORIES ---------------- */}
-      <section className="mx-auto max-w-7xl px-4 md:px-8 pb-16 md:pb-24">
-        <div className="flex items-end justify-between mb-8 gap-4">
+      <section className="mx-auto max-w-7xl px-4 md:px-8 pb-8 md:pb-16">
+        <div className="flex items-end justify-between mb-3 md:mb-6 gap-4">
           <div>
-            <p className="pk-mono text-xs pk-ink-soft uppercase tracking-wide mb-2">Browse by category</p>
-            <h2 className="pk-display text-2xl md:text-4xl font-semibold">Whatever you're after, start here.</h2>
+            <p className="pk-mono text-xs pk-ink-soft uppercase tracking-wide mb-1">Browse by category</p>
+            <h2 className="pk-display text-xl md:text-3xl font-semibold">Whatever you're after, start here.</h2>
           </div>
         </div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5 md:gap-5">
           {CATEGORIES.map((cat) => {
             const CatIcon = cat.icon;
             const count = approvedListings.filter((l) => l.tag.toLowerCase() === cat.key).length;
@@ -5857,17 +5982,17 @@ import.meta.env.PROD ? (
               <button
                 key={cat.key}
                 onClick={() => handleNavClick(cat.key)}
-                className="pk-card text-left p-5 md:p-6 flex flex-col gap-4"
+                className="pk-card pk-cat-card text-left"
               >
                 <div className="pk-category-icon">
-                  <CatIcon size={22} />
+                  <CatIcon size={20} />
                 </div>
-                <div>
-                  <h3 className="pk-display text-lg font-semibold mb-1">{cat.title}</h3>
-                  <p className="pk-ink-soft text-sm">{cat.blurb}</p>
-                </div>
-                <div className="pk-mono text-xs pk-primary-text mt-auto pt-2 flex items-center gap-1">
-                  {count} listing{count === 1 ? "" : "s"} <ArrowUpRight size={13} />
+                <div className="min-w-0">
+                  <h3 className="pk-display text-base md:text-lg font-semibold">{cat.title}</h3>
+                  <p className="pk-ink-soft text-sm mt-1 hidden md:block">{cat.blurb}</p>
+                  <div className="pk-mono text-xs pk-primary-text mt-0.5 md:mt-3 flex items-center gap-1 whitespace-nowrap">
+                    {count} listing{count === 1 ? "" : "s"} <ArrowUpRight size={12} className="hidden md:inline-block" />
+                  </div>
                 </div>
               </button>
             );
@@ -5876,15 +6001,15 @@ import.meta.env.PROD ? (
       </section>
 
       {/* ---------------- FEATURED PROPERTIES ---------------- */}
-      <section ref={featuredRef} className="mx-auto max-w-7xl px-4 md:px-8 pb-16 md:pb-24">
-        <div className="flex items-end justify-between mb-8 gap-4">
+      <section ref={featuredRef} className="mx-auto max-w-7xl px-4 md:px-8 pb-8 md:pb-16">
+        <div className="flex items-end justify-between mb-3 md:mb-6 gap-4">
           <div>
-            <p className="pk-mono text-xs pk-ink-soft uppercase tracking-wide mb-2">{approvedListings.some(isFeatured) ? "Featured and latest" : "Latest"}</p>
-            <h2 className="pk-display text-2xl md:text-4xl font-semibold">Featured listings</h2>
+            <p className="pk-mono text-xs pk-ink-soft uppercase tracking-wide mb-1">{approvedListings.some(isFeatured) ? "Featured and latest" : "Latest"}</p>
+            <h2 className="pk-display text-xl md:text-3xl font-semibold">Featured listings</h2>
           </div>
           {approvedListings.length > 0 && (
-            <button className="pk-btn-outline hidden md:inline-flex" onClick={() => goToListings("all")}>
-              View all <ArrowRight size={15} />
+            <button className="pk-btn-outline pk-btn-sm" onClick={() => goToListings("all")}>
+              View all <ArrowRight size={14} />
             </button>
           )}
         </div>
@@ -5907,14 +6032,11 @@ import.meta.env.PROD ? (
                   isFavorite={favorites.has(p.id)}
                   onToggleFavorite={toggleFavorite}
                   onSelect={openListing}
-                  style={{ width: "78vw", maxWidth: 300 }}
+                  style={{ width: "min(62vw, 240px)" }}
                 />
               ))}
             </div>
-            <button className="pk-btn-outline w-full justify-center mt-6 md:hidden" onClick={() => goToListings("all")}>
-              View all listings <ArrowRight size={15} />
-            </button>
-            <p className="pk-ink-soft text-xs mt-4">
+            <p className="pk-ink-soft text-xs mt-3">
               Listings marked Featured are promoted by their agents.{" "}
               <button className="pk-primary-text font-semibold underline" onClick={goToAdvertise}>Promote yours</button>
             </p>
@@ -5923,16 +6045,17 @@ import.meta.env.PROD ? (
       </section>
 
       {/* ---------------- HOW IT WORKS ---------------- */}
-      <section className="mx-auto max-w-7xl px-4 md:px-8 pb-16 md:pb-24">
-        <p className="pk-mono text-xs pk-ink-soft uppercase tracking-wide mb-2">How it works</p>
-        <h2 className="pk-display text-2xl md:text-4xl font-semibold mb-10">Three steps to your hao.</h2>
-        <div className="grid md:grid-cols-3 gap-8 md:gap-6">
-          {STEPS.map((step, i) => (
-            <div key={step.n}>
-              <div className="pk-step-num">{step.n}</div>
-              <Roofline className="pk-primary-text my-3" style={{ maxWidth: 80, height: 12 }} />
-              <h3 className="pk-display text-xl font-semibold mb-2">{step.title}</h3>
-              <p className="pk-ink-soft text-sm leading-relaxed">{step.body}</p>
+      <section className="mx-auto max-w-7xl px-4 md:px-8 pb-8 md:pb-16">
+        <p className="pk-mono text-xs pk-ink-soft uppercase tracking-wide mb-1">How it works</p>
+        <h2 className="pk-display text-xl md:text-3xl font-semibold mb-3 md:mb-6">Three steps to your hao.</h2>
+        <div className="grid md:grid-cols-3 gap-2.5 md:gap-5">
+          {STEPS.map((step) => (
+            <div key={step.n} className="pk-step">
+              <span className="pk-step-badge" aria-hidden="true">{Number(step.n)}</span>
+              <div className="min-w-0">
+                <h3 className="pk-display text-base md:text-lg font-semibold">{step.title}</h3>
+                <p className="pk-ink-soft text-sm leading-snug mt-0.5">{step.body}</p>
+              </div>
             </div>
           ))}
         </div>
@@ -5940,21 +6063,21 @@ import.meta.env.PROD ? (
 
       {/* ---------------- AGENTS ---------------- */}
       {verifiedAgents.length > 0 && (
-      <section ref={agentsRef} className="mx-auto max-w-7xl px-4 md:px-8 pb-16 md:pb-24">
-        <div className="flex items-end justify-between mb-8 gap-4">
+      <section ref={agentsRef} className="mx-auto max-w-7xl px-4 md:px-8 pb-8 md:pb-16">
+        <div className="flex items-end justify-between mb-3 md:mb-6 gap-4">
           <div>
-            <p className="pk-mono text-xs pk-ink-soft uppercase tracking-wide mb-2">Trusted network</p>
-            <h2 className="pk-display text-2xl md:text-4xl font-semibold">Meet a few of our agents</h2>
+            <p className="pk-mono text-xs pk-ink-soft uppercase tracking-wide mb-1">Trusted network</p>
+            <h2 className="pk-display text-xl md:text-3xl font-semibold">Meet a few of our agents</h2>
           </div>
-          <button className="pk-btn-outline hidden md:inline-flex" onClick={goToAgents}>
-            <Users size={15} /> View all agents
+          <button className="pk-btn-outline pk-btn-sm" onClick={goToAgents}>
+            <Users size={14} /> View all
           </button>
         </div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5 md:gap-5">
           {verifiedAgents.map((a) => (
             <div
               key={a.id}
-              className="pk-card p-5 flex flex-col items-center text-center gap-2"
+              className="pk-card p-3 md:p-5 flex flex-col items-center text-center gap-1.5"
               {...(locked
                 ? {
                     role: "button",
@@ -5981,26 +6104,23 @@ import.meta.env.PROD ? (
             </div>
           ))}
         </div>
-        <button className="pk-btn-outline w-full justify-center mt-6 md:hidden" onClick={goToAgents}>
-          <Users size={15} /> View all agents
-        </button>
       </section>
       )}
 
       {/* ---------------- CONTACT CTA ---------------- */}
-      <section className="mx-auto max-w-7xl px-4 md:px-8 pb-16 md:pb-24">
-        <div ref={ctaRef} className="pk-cta-band px-6 py-12 md:px-14 md:py-16 flex flex-col md:flex-row items-center gap-8 justify-between">
+      <section className="mx-auto max-w-7xl px-4 md:px-8 pb-8 md:pb-16">
+        <div ref={ctaRef} className="pk-cta-band px-5 py-6 md:px-12 md:py-10 flex flex-col md:flex-row items-stretch md:items-center gap-4 md:gap-8 justify-between">
           <div className="max-w-lg">
-            <p className="pk-mono text-xs uppercase tracking-wide mb-3 opacity-80">For buyers & renters</p>
-            <h2 className="pk-display text-2xl md:text-3xl font-semibold mb-3">Ready to buy or rent?</h2>
-            <p className="opacity-85 text-sm md:text-base">
+            <p className="pk-mono text-xs uppercase tracking-wide mb-2 opacity-80">For buyers & renters</p>
+            <h2 className="pk-display text-xl md:text-3xl font-semibold mb-2">Ready to buy or rent?</h2>
+            <p className="opacity-85 text-sm md:text-base leading-snug">
               {AUTH_ENABLED && !account && !currentUser
                 ? "Create a free account to save listings and see them on any phone or computer, so you can pick up right where you left off."
                 : "Browse reviewed listings across Buy, Rent, Commercial and Land, then contact the listing owner or agent directly. Not sure where to start? Email us and we'll point you in the right direction."}
             </p>
           </div>
           <button
-            className="pk-mono flex items-center gap-2 font-semibold px-6 py-3 rounded-full flex-shrink-0"
+            className="pk-mono flex items-center justify-center gap-2 font-semibold px-6 py-3 rounded-full flex-shrink-0"
             style={{ background: "var(--accent)", color: "var(--accent-ink)" }}
             onClick={() => (AUTH_ENABLED && !account && !currentUser ? openAuth("signup") : goToListings("buy", { resetFilters: true }))}
           >
@@ -6142,10 +6262,10 @@ import.meta.env.PROD ? (
 
       {/* ---------------- FOOTER ---------------- */}
       <footer className="pk-footer">
-        <div className="mx-auto max-w-7xl px-4 md:px-8 py-14">
+        <div className="mx-auto max-w-7xl px-4 md:px-8 py-8 md:py-14">
           <div className="pk-footer-grid">
-            <div>
-              <div className="flex items-center gap-2.5 mb-4 cursor-pointer" onClick={goHome}>
+            <div className="pk-footer-brand">
+              <div className="flex items-center gap-2.5 mb-3 cursor-pointer" onClick={goHome}>
                 <LogoMark size={30} />
                 <span className="pk-display" style={{ fontSize: "1.2rem" }}>Hao yangu realtors</span>
               </div>
@@ -6153,7 +6273,7 @@ import.meta.env.PROD ? (
                 Buy, rent, lease or list — all in one place.
               </p>
               {Object.values(SITE_CONFIG.socials).some(Boolean) && (
-                <div className="flex flex-wrap items-center gap-2 mt-5">
+                <div className="flex flex-wrap items-center gap-2 mt-3 md:mt-5">
                   {[
                     ["facebook", "Facebook", <Facebook size={16} key="f" />],
                     ["instagram", "Instagram", <Instagram size={16} key="i" />],
@@ -6171,8 +6291,8 @@ import.meta.env.PROD ? (
               )}
             </div>
             <div>
-              <h4 className="font-semibold text-sm mb-4">Explore</h4>
-              <ul className="flex flex-col gap-2.5 text-sm">
+              <h4 className="font-semibold text-sm mb-2.5">Explore</h4>
+              <ul className="flex flex-col gap-2 text-sm">
                 <li><button className="pk-footer-link" onClick={() => goToListings("buy", { resetFilters: true })}>Buy a home</button></li>
                 <li><button className="pk-footer-link" onClick={() => goToListings("rent", { resetFilters: true })}>Rent a home</button></li>
                 <li><button className="pk-footer-link" onClick={() => goToListings("commercial", { resetFilters: true })}>Commercial spaces</button></li>
@@ -6180,8 +6300,8 @@ import.meta.env.PROD ? (
               </ul>
             </div>
             <div>
-              <h4 className="font-semibold text-sm mb-4">Get in touch</h4>
-              <ul className="flex flex-col gap-2.5 text-sm">
+              <h4 className="font-semibold text-sm mb-2.5">Get in touch</h4>
+              <ul className="flex flex-col gap-2 text-sm">
                 <li><a href={`mailto:${SITE_CONFIG.contactEmail}`}>Email us</a></li>
                 <li><button className="pk-footer-link" onClick={goToAgents}>Our agents</button></li>
                 <li><button className="pk-footer-link" onClick={goToVerification}>What Verified means</button></li>
@@ -6193,7 +6313,7 @@ import.meta.env.PROD ? (
             </div>
           </div>
 
-          <div className="flex flex-col md:flex-row items-center justify-between gap-4 pt-8 mt-10 text-xs pk-ink-soft" style={{ borderTop: "1px solid var(--border)" }}>
+          <div className="flex flex-col md:flex-row items-center justify-between gap-3 pt-5 mt-6 md:pt-8 md:mt-10 text-xs pk-ink-soft" style={{ borderTop: "1px solid var(--border)" }}>
             <span>© 2026 {SITE_CONFIG.name}. All rights reserved.</span>
             <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2">
               <a href={`mailto:${SITE_CONFIG.contactEmail}`} className="flex items-center gap-1"><Mail size={13} /> {SITE_CONFIG.contactEmail}</a>
