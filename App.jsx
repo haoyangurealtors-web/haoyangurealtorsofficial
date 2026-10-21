@@ -1108,7 +1108,7 @@ function CustomSelect({ id, label, value, options, onChange }) {
 function PropertyCard({ property, isFavorite, onToggleFavorite, onSelect, style }) {
   return (
     <article
-      className="pk-card overflow-hidden"
+      className={`pk-card overflow-hidden ${isFeatured(property) ? "pk-card-featured" : ""}`}
       style={{ cursor: onSelect ? "pointer" : "default", ...style }}
       onClick={() => onSelect && onSelect(property.id)}
       role={onSelect ? "button" : undefined}
@@ -1122,7 +1122,14 @@ function PropertyCard({ property, isFavorite, onToggleFavorite, onSelect, style 
     >
       <div className="pk-prop-media">
         <ImageWithFallback src={thumbSrc(property.img)} fallbackSrc={property.img} alt={property.title} className="pk-prop-media-img" iconFallback={HomeIcon} />
-        <span className="pk-prop-tag">{isFeatured(property) ? "Featured" : property.tag}</span>
+        {isFeatured(property) ? (
+          <span className="pk-prop-tag pk-prop-tag-featured">
+            <Star size={12} fill="currentColor" aria-hidden="true" />
+            <span>Featured · {TAG_LABELS[property.tag] || property.tag}</span>
+          </span>
+        ) : (
+          <span className="pk-prop-tag">{TAG_LABELS[property.tag] || property.tag}</span>
+        )}
         <button
           className="pk-fav-btn"
           aria-label={isFavorite ? "Remove from saved" : "Save property"}
@@ -1835,7 +1842,11 @@ function PropertyDetailPage({
               <span className="text-sm pk-ink-soft font-normal">{property.period}</span>
             </span>
             <span className="pk-chip-tag">{TAG_LABELS[property.tag] || property.tag}</span>
-            {isFeatured(property) && <span className="pk-chip-tag pk-chip-tag-featured">Featured</span>}
+            {isFeatured(property) && (
+              <span className="pk-chip-tag pk-chip-tag-featured">
+                <Star size={11} fill="currentColor" aria-hidden="true" /> Featured
+              </span>
+            )}
           </div>
 
           {facts.length > 0 && (
@@ -6036,10 +6047,15 @@ import.meta.env.PROD ? (
                 />
               ))}
             </div>
-            <p className="pk-ink-soft text-xs mt-3">
-              Listings marked Featured are promoted by their agents.{" "}
-              <button className="pk-primary-text font-semibold underline" onClick={goToAdvertise}>Promote yours</button>
-            </p>
+            <div className="pk-promo-note">
+              <span className="pk-promo-icon" aria-hidden="true"><Star size={16} fill="currentColor" /></span>
+              <p>
+                <strong>Featured</strong> listings are promoted by their agents and shown first.
+              </p>
+              <button type="button" className="pk-promo-btn" onClick={goToAdvertise}>
+                Promote yours <ArrowRight size={14} />
+              </button>
+            </div>
           </>
         )}
       </section>

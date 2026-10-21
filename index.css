@@ -1110,3 +1110,36 @@
         .pk-contact-lines a > svg { flex-shrink: 0; color: var(--primary); }
         .pk-contact-lines a > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
         .pk-contact-lines a > em { margin-left: auto; padding-left: 8px; font-style: normal; font-size: 0.68rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--accent-text); flex-shrink: 0; }
+
+
+        /* ---------- Featured listings stand out ---------- */
+        :root { --gold: #E8A93B; --gold-deep: #B8741A; --gold-ink: #2B1D05; }
+        .pk-prop-tag { display: inline-flex; align-items: center; gap: 5px; max-width: calc(100% - 62px); }
+        .pk-prop-tag > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .pk-prop-tag-featured {
+          background: linear-gradient(135deg, #F6C75A 0%, var(--gold) 55%, #D98E22 100%);
+          color: var(--gold-ink); box-shadow: 0 4px 12px rgba(120, 70, 0, 0.35);
+        }
+        .pk-prop-tag-featured > svg { flex-shrink: 0; }
+        .pk-card-featured { border-color: color-mix(in srgb, var(--gold) 70%, var(--border)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--gold) 45%, transparent); }
+        .pk-chip-tag-featured { background: linear-gradient(135deg, #F6C75A, var(--gold) 60%, #D98E22); color: var(--gold-ink); gap: 4px; }
+
+        .pk-promo-note {
+          display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 14px; padding: 12px 14px; border-radius: 16px;
+          background: linear-gradient(135deg, color-mix(in srgb, var(--gold) 20%, var(--surface)), var(--surface));
+          border: 1px solid color-mix(in srgb, var(--gold) 55%, var(--border));
+        }
+        .pk-promo-icon {
+          width: 34px; height: 34px; border-radius: 999px; flex-shrink: 0; display: grid; place-items: center;
+          background: linear-gradient(135deg, #F6C75A, #D98E22); color: var(--gold-ink);
+        }
+        .pk-promo-note p { flex: 1 1 180px; margin: 0; font-size: 0.9rem; line-height: 1.35; color: var(--ink); }
+        .pk-promo-note strong { color: var(--gold-deep); }
+        .pk-root[data-theme='dark'] .pk-promo-note strong { color: var(--gold); }
+        .pk-promo-btn {
+          display: inline-flex; align-items: center; justify-content: center; gap: 6px; flex-shrink: 0; cursor: pointer;
+          padding: 8px 16px; border-radius: 999px; border: none; font-weight: 700; font-size: 0.85rem;
+          background: var(--primary); color: var(--primary-ink); transition: transform .25s var(--ease), box-shadow .25s var(--ease);
+        }
+        .pk-promo-btn:hover { transform: translateY(-1px); box-shadow: 0 8px 18px var(--shadow); }
+        @media (max-width: 480px) { .pk-promo-btn { width: 100%; } }
