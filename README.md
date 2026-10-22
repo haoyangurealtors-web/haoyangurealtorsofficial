@@ -19,12 +19,16 @@ You need Node.js 18 or newer (nodejs.org, the LTS version) and Git.
 5. Then run supabase-account-wall.sql once too. It makes listing details (description, amenities, contact) readable only by signed-in users, so the sign-up wall can't be bypassed. Safe to run again.
 6. Run supabase-profile-photos.sql once as well. It lets each signed-in person save their own profile photo (and only their own).
 7. Run supabase-agents-and-agencies.sql once too. It lets agents sign in to add and remove their own listings, and lets each agency see and edit every listing its agents post. Safe to run again. Until you run it, the site works as before and agent logins simply don't work yet.
-8. To make someone a super admin on the live site, run supabase-add-superadmin.sql in Supabase (edit the email inside first). They must sign up with that email first.
+8. Run supabase-agent-ratings-and-phone.sql once too (after step 7). It adds agent phone numbers (readable only by signed-in visitors) and agent ratings, with the rules for who can see which scores. Safe to run again. Until you run it the site works as before, but phone numbers and ratings can't be saved.
+9. To make someone a super admin on the live site, run supabase-add-superadmin.sql in Supabase (edit the email inside first). They must sign up with that email first.
 
 Who can do what
 - Superadmin: everything. Adds agencies (the Agencies tab), reviews and approves listings, verifies agents.
 - Agency: adds listings, sees every listing posted under it (its own and its agents'), filters by who posted it, and edits or removes any of them. Adds its own agents and can give each one a login.
 - Agent: signs in with the login email their agency gave them (create an account with that email, confirm it, then Staff sign in). Adds listings and removes their own. Sees only their own.
+- Visitors with an account: tap any agent card to open the agent's profile (photo, name, phone, agency and the properties they handle), and rate the agent from 1 to 5 stars in the Rate tab. One rating per person per agent, which they can change or remove.
+- Ratings are private. The superadmin sees every agent's scores (Ratings tab, and the Score line on the Agents tab); an agency sees the scores of its own agents only. Agents and the public never see them.
+- Phone numbers: add one when creating an agent, or later from the agent's expanded row (Agents tab for the superadmin, My Agents tab for an agency).
 - Listings from agencies and agents always start as "Pending" until the superadmin approves them; editing never changes that.
 - After signing in or signing up, superadmins, agencies and agents go straight to their own dashboard and see only that: the public site is not shown to them. The button in the top corner of their dashboard is "Log out". Everyone else (visitors and ordinary customers) sees the normal site.
 
@@ -36,6 +40,7 @@ Every time you push to GitHub, Cloudflare rebuilds and publishes the site in abo
 - supabase-profile-photos.sql: lets each person save their own profile photo
 - supabase-add-superadmin.sql: makes an email a super admin (and shows the super admin count)
 - supabase-agents-and-agencies.sql: agent logins, and the rules for who can add, edit and remove which listings
+- supabase-agent-ratings-and-phone.sql: agent phone numbers and agent ratings, and who can see them
 - _worker.js, _routes.json: share previews, sitemap and robots (Cloudflare)
 - _headers, _redirects, vercel.json: security settings and page addresses
 - index.html, favicon and icons, og-image.jpg, logo files: the page shell and branding

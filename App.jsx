@@ -249,6 +249,8 @@ const STORAGE_KEYS = {
   agencies: "hy-realtors:admins", // same stored key as before, so nothing saved in a browser is lost
   stats: "hy-realtors:usage-stats",
   favorites: "hy-realtors:favorites",
+  ratings: "hy-realtors:agent-ratings",
+  raterId: "hy-realtors:rater-id",
 };
 
 const toHex = (buf) =>
@@ -549,6 +551,9 @@ function listingToRow(l) {
     submitted_by: l.submittedBy || "",
   };
 }
+// True once the database has the agents.phone column (see supabase-agent-ratings-and-phone.sql). Until then the
+// phone is simply left out of what we save, so the site keeps working before that file has been run.
+let agentPhoneColumnReady = false;
 function agentFromRow(r) {
   return {
     id: Number(r.id),
@@ -560,6 +565,7 @@ function agentFromRow(r) {
     rating: r.rating === null || r.rating === undefined ? null : Number(r.rating),
     reviews: Number(r.reviews) || 0,
     img: r.img || "",
+    phone: typeof r.phone === "string" ? r.phone : "",
     comments: Array.isArray(r.comments) ? r.comments : [],
     verifiedAt: r.verified_at || null,
     verification: r.verification && typeof r.verification === "object" ? r.verification : {},
@@ -575,6 +581,7 @@ function agentToRow(a) {
     rating: typeof a.rating === "number" ? a.rating : null,
     reviews: a.reviews || 0,
     img: a.img || "",
+    ...(a.phone ? { phone: String(a.phone).trim() } : agentPhoneColumnReady && typeof a.phone === "string" ? { phone: "" } : {}),
     comments: a.comments || [],
     verified_at: a.verifiedAt || null,
     verification: a.verification || {},
@@ -612,6 +619,59 @@ function agentLoginToRow(a) {
 const isStaffUser = (u) => Boolean(u) && (u.isSuperAdmin || u.role === "superadmin" || u.role === "agency" || u.role === "agent");
 const sameText = (a, b) => String(a || "").trim().toLowerCase() === String(b || "").trim().toLowerCase();
 
+// ---------- Agent ratings and "properties in charge" ----------
+const RATING_WORDS = ["", "Poor", "Fair", "Good", "Very good", "Excellent"];
+function ratingFromRow(r) {
+  return {
+    id: r.id,
+    agentId: Number(r.agent_id),
+    userId: r.user_id || "",
+    stars: Number(r.stars) || 0,
+    comment: r.comment || "",
+    raterName: r.rater_name || "",
+    createdAt: r.created_at || "",
+    updatedAt: r.updated_at || r.created_at || "",
+  };
+}
+function ratingStats(ratings, agentId) {
+  const list = (ratings || []).filter((r) => r.agentId === agentId && r.stars >= 1 && r.stars <= 5);
+  const counts = [0, 0, 0, 0, 0];
+  list.forEach((r) => {
+    counts[r.stars - 1] += 1;
+  });
+  const count = list.length;
+  const sum = counts.reduce((total, c, i) => total + c * (i + 1), 0);
+  return { count, avg: count ? sum / count : null, counts, list };
+}
+// An agent is in charge of the live listings they posted, or that name them as the contact, under their agency.
+function agentListings(agent, listings) {
+  return (listings || []).filter(
+    (l) =>
+      l.status === "approved" &&
+      sameText(l.agency, agent.agency) &&
+      (sameText(l.submittedBy, agent.name) || sameText(l.contact && l.contact.name, agent.name))
+  );
+}
+function phoneProblem(p) {
+  const value = String(p || "").trim();
+  if (!value) return "";
+  const digits = value.replace(/\D/g, "");
+  if (!/^[+\d][\d\s()+-]*$/.test(value) || digits.length < 9 || digits.length > 15) return "Enter a valid phone number, for example 0712 345 678.";
+  return "";
+}
+function getLocalRaterId() {
+  try {
+    let id = window.localStorage.getItem(STORAGE_KEYS.raterId);
+    if (!id) {
+      id = "r" + Math.random().toString(36).slice(2) + Date.now().toString(36);
+      window.localStorage.setItem(STORAGE_KEYS.raterId, id);
+    }
+    return id;
+  } catch (e) {
+    return "r-session";
+  }
+}
+
 // Panels hand us the whole new list; we work out what was added, changed or removed and send just that.
 async function syncRows(table, prev, next, toRow) {
   const session = await getValidSession();
@@ -638,13 +698,28 @@ async function syncRows(table, prev, next, toRow) {
 const PUBLIC_LISTING_COLUMNS = "id,title,location,price_value,period,tag,beds,baths,size,acres,space_type,img,featured,featured_until,agency,status,created_at";
 const PUBLIC_AGENT_COLUMNS = "id,name,focus,area,agency,status,rating,reviews,img,verified_at,created_at";
 
+// Signed-in visitors also get each agent's phone number. If the database hasn't had that column added yet,
+// fall back to the public columns so nothing breaks.
+async function fetchAgentRows(token) {
+  if (token) {
+    try {
+      const rows = await sbRequest(`/rest/v1/agents?select=${PUBLIC_AGENT_COLUMNS},phone&order=id.asc`, { token });
+      agentPhoneColumnReady = true;
+      return rows;
+    } catch (e) {
+      /* the phone column isn't there yet */
+    }
+  }
+  return sbRequest(`/rest/v1/agents?select=${PUBLIC_AGENT_COLUMNS}&order=id.asc`, { token });
+}
+
 async function fetchRemoteData(isSuperadmin, isStaff = isSuperadmin) {
   const session = await getValidSession();
   const token = session ? session.access_token : undefined;
   const listingColumns = token ? "*" : PUBLIC_LISTING_COLUMNS;
   const requests = [
     sbRequest(`/rest/v1/listings?select=${listingColumns}&order=id.desc&limit=500`, { token }),
-    sbRequest(`/rest/v1/agents?select=${PUBLIC_AGENT_COLUMNS}&order=id.asc`, { token }),
+    fetchAgentRows(token),
   ];
   if (token && isSuperadmin) requests.push(sbRequest("/rest/v1/staff?select=*&order=id.asc", { token }));
   const [listingRows, agentRows, staffRows] = await Promise.all(requests);
@@ -656,6 +731,16 @@ async function fetchRemoteData(isSuperadmin, isStaff = isSuperadmin) {
       loginRows = await sbRequest("/rest/v1/agent_logins?select=*&order=id.asc", { token });
     } catch (e) {
       loginRows = null;
+    }
+  }
+  // Ratings: the database returns everything to the superadmin, an agency's own agents' ratings to that agency,
+  // and only the person's own ratings to anyone else. Before the ratings table exists this is not an error.
+  let ratingRows = null;
+  if (token) {
+    try {
+      ratingRows = await sbRequest("/rest/v1/agent_ratings?select=*&order=created_at.desc&limit=3000", { token });
+    } catch (e) {
+      ratingRows = null;
     }
   }
   let agents = agentRows;
@@ -676,6 +761,7 @@ async function fetchRemoteData(isSuperadmin, isStaff = isSuperadmin) {
   const data = { listings: listingRows.map(listingFromRow), agents: agents.map(agentFromRow) };
   if (staffRows) data.agencies = staffRows.filter((r) => r.role === "admin").map(staffFromRow);
   if (Array.isArray(loginRows)) data.agentLogins = loginRows.map(agentLoginFromRow);
+  if (Array.isArray(ratingRows)) data.ratings = ratingRows.map(ratingFromRow);
   return data;
 }
 
@@ -2601,7 +2687,475 @@ function VerificationPage({ onBackHome, onOpenAgents }) {
   );
 }
 
-function AgentsPage({ agents, onBackHome, onOpenModal, onOpenVerification, locked = false, onRequireAccount }) {
+/* ---------------------------------------------------------------- */
+/* Agent cards, agent profile and ratings                             */
+/* ---------------------------------------------------------------- */
+
+function StarsRow({ value, size = 14 }) {
+  const rounded = Math.round(value || 0);
+  return (
+    <span className="inline-flex items-center gap-0.5" aria-hidden="true">
+      {[1, 2, 3, 4, 5].map((n) => (
+        <Star key={n} size={size} className="pk-accent-text" fill={n <= rounded ? "var(--accent-text)" : "none"} strokeWidth={1.75} />
+      ))}
+    </span>
+  );
+}
+
+// Staff-only score line: stars, the average and how many people rated.
+function StaffScore({ stats }) {
+  if (!stats || stats.count === 0) return <span className="pk-ink-soft text-xs">No ratings yet</span>;
+  return (
+    <span className="pk-agent-score" title={`${stats.count} rating${stats.count === 1 ? "" : "s"}`}>
+      <StarsRow value={stats.avg} size={13} />
+      <span className="pk-mono font-semibold">{stats.avg.toFixed(1)}</span>
+      <span className="pk-ink-soft">({stats.count})</span>
+    </span>
+  );
+}
+
+// The card used on the home page and the Agents page. The whole card opens the agent's profile.
+function AgentCard({ agent, onOpen, propertyCount }) {
+  const open = () => onOpen(agent.id);
+  return (
+    <div
+      className="pk-card pk-agent-card"
+      role="button"
+      tabIndex={0}
+      aria-label={`View ${agent.name}'s profile`}
+      onClick={open}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          open();
+        }
+      }}
+    >
+      <ImageWithFallback src={agent.img} alt={agent.name} className="pk-agent-card-photo" iconFallback={Users} />
+      <h3 className="pk-agent-card-name">
+        <span>{agent.name}</span>
+        {agent.status === "verified" && <VerifiedBadge size={15} />}
+      </h3>
+      {agent.focus && <span className="pk-agent-card-focus">{agent.focus}</span>}
+      {agent.area && (
+        <p className="pk-agent-card-meta">
+          <MapPin size={12} className="flex-none" /> <span>{agent.area}</span>
+        </p>
+      )}
+      {agent.agency && (
+        <p className="pk-agent-card-meta">
+          <Building2 size={12} className="flex-none" /> <span>{agent.agency}</span>
+        </p>
+      )}
+      {typeof propertyCount === "number" && (
+        <p className="pk-agent-card-meta">
+          <HomeIcon size={12} className="flex-none" /> <span>{propertyCount} propert{propertyCount === 1 ? "y" : "ies"}</span>
+        </p>
+      )}
+      <span className="pk-agent-card-cta">
+        View profile <ArrowRight size={13} aria-hidden="true" />
+      </span>
+    </div>
+  );
+}
+
+function StarInput({ value, onChange, disabled }) {
+  const [hover, setHover] = useState(0);
+  const shown = hover || value;
+  return (
+    <div className="pk-star-input" role="radiogroup" aria-label="Your rating out of 5" onMouseLeave={() => setHover(0)}>
+      {[1, 2, 3, 4, 5].map((n) => (
+        <button
+          key={n}
+          type="button"
+          role="radio"
+          aria-checked={value === n}
+          aria-label={`${n} star${n === 1 ? "" : "s"}, ${RATING_WORDS[n]}`}
+          disabled={disabled}
+          className="pk-star-btn"
+          onMouseEnter={() => setHover(n)}
+          onFocus={() => setHover(n)}
+          onBlur={() => setHover(0)}
+          onClick={() => onChange(n)}
+        >
+          <Star size={34} className="pk-accent-text" fill={n <= shown ? "var(--accent-text)" : "none"} strokeWidth={1.5} aria-hidden="true" />
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function ratingErrorMessage(err) {
+  if (err instanceof TypeError) return "We couldn't reach the server. Check your connection and try again.";
+  const code = String((err && err.code) || "");
+  if (err && (err.status === 404 || code === "PGRST205" || code === "42P01")) return "Ratings aren't switched on yet. Please try again later.";
+  if (err && (err.status === 401 || err.status === 403)) return "We couldn't save your rating. Make sure you are signed in with your own account, then try again.";
+  return "We couldn't save your rating. Please try again.";
+}
+
+function AgentRatePanel({ agent, mine, onSubmit, onRemove }) {
+  const [stars, setStars] = useState(mine ? mine.stars : 0);
+  const [comment, setComment] = useState(mine ? mine.comment : "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [done, setDone] = useState("");
+  useEffect(() => {
+    setStars(mine ? mine.stars : 0);
+    setComment(mine ? mine.comment : "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mine && mine.id, mine && mine.updatedAt, agent.id]);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (busy) return;
+    if (!stars) {
+      setError("Tap a star to choose your rating.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    setDone("");
+    try {
+      await onSubmit(agent.id, stars, comment.trim());
+      setDone(mine ? "Your rating was updated. Thank you!" : "Thanks! Your rating was saved.");
+    } catch (err) {
+      setError(ratingErrorMessage(err));
+    }
+    setBusy(false);
+  };
+  const remove = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError("");
+    setDone("");
+    try {
+      await onRemove(agent.id);
+      setStars(0);
+      setComment("");
+      setDone("Your rating was removed.");
+    } catch (err) {
+      setError(ratingErrorMessage(err));
+    }
+    setBusy(false);
+  };
+
+  return (
+    <div className="pk-rate-box" role="tabpanel" id="pk-agent-panel-rate" aria-labelledby="pk-agent-tab-rate">
+      <h2 className="pk-display text-xl font-semibold mb-1">{mine ? "Your rating" : `Rate ${agent.name}`}</h2>
+      <p className="pk-ink-soft text-sm mb-4">
+        How was your experience with this agent? Your rating is private: only the agent's agency and the {SITE_CONFIG.name} team can see it. It is not shown publicly.
+      </p>
+      <form onSubmit={submit}>
+        <StarInput
+          value={stars}
+          disabled={busy}
+          onChange={(n) => {
+            setStars(n);
+            setDone("");
+            setError("");
+          }}
+        />
+        <p className="pk-ink-soft text-sm mt-1" aria-live="polite">
+          {stars ? RATING_WORDS[stars] : "Tap a star to rate"}
+        </p>
+        <label className="block mt-4 text-sm font-semibold" htmlFor="pk-rate-comment">
+          Comment (optional)
+        </label>
+        <textarea
+          id="pk-rate-comment"
+          className="pk-rate-textarea"
+          rows={4}
+          maxLength={600}
+          value={comment}
+          disabled={busy}
+          placeholder="Was the agent helpful, honest and easy to reach?"
+          onChange={(e) => setComment(e.target.value)}
+        />
+        <p className="pk-ink-soft text-xs text-right">{comment.length}/600</p>
+        {error && (
+          <p className="pk-admin-error mt-2" role="alert">
+            {error}
+          </p>
+        )}
+        {done && !error && (
+          <div className="pk-admin-notice mt-2" role="status">
+            {done}
+          </div>
+        )}
+        <div className="flex gap-2 flex-wrap mt-4">
+          <button type="submit" className="pk-btn-primary" disabled={busy || !stars}>
+            <Star size={15} /> {busy ? "Saving…" : mine ? "Update my rating" : "Submit rating"}
+          </button>
+          {mine && (
+            <button type="button" className="pk-btn-outline" onClick={remove} disabled={busy}>
+              Remove my rating
+            </button>
+          )}
+        </div>
+      </form>
+      {mine && <p className="pk-ink-soft text-xs mt-3">You last rated this agent on {formatShortDate(mine.updatedAt)}.</p>}
+    </div>
+  );
+}
+
+function AgentDetailPage({ agent, listings, myRating, favorites, onToggleFavorite, onOpenListing, onBackHome, onBackAgents, onRate, onRemoveRating }) {
+  const [tab, setTab] = useState("properties");
+  const phone = String(agent.phone || "").trim();
+  const whatsapp = whatsappLink(phone, `Hi ${agent.name}, I found you on ${SITE_CONFIG.name}.`);
+
+  return (
+    <section className="mx-auto max-w-7xl px-4 md:px-8 pt-8 md:pt-12 pb-20">
+      <p className="pk-mono text-xs uppercase tracking-wide mb-3 pk-breadcrumb">
+        <button onClick={onBackHome} className="pk-primary-text font-semibold">Home</button>
+        <span className="pk-ink-soft"> / </span>
+        <button onClick={onBackAgents} className="pk-primary-text font-semibold">Agents</button>
+        <span className="pk-ink-soft"> / {agent.name}</span>
+      </p>
+
+      <div className="pk-card pk-agent-profile" style={{ transform: "none" }}>
+        <ImageWithFallback src={agent.img} alt={agent.name} className="pk-agent-profile-photo" iconFallback={Users} eager />
+        <div className="min-w-0">
+          <h1 className="pk-display text-2xl md:text-4xl font-semibold flex items-center justify-center md:justify-start gap-2 flex-wrap">
+            <span>{agent.name}</span>
+            {agent.status === "verified" && <VerifiedBadge size={22} />}
+          </h1>
+          {agent.focus && <p className="pk-primary-text text-sm font-semibold mt-1">{agent.focus}</p>}
+          <div className="pk-agent-facts">
+            <div>
+              <Building2 size={15} className="flex-none" /> <span>{agent.agency ? agent.agency : "Independent agent"}</span>
+            </div>
+            {agent.area && (
+              <div>
+                <MapPin size={15} className="flex-none" /> <span>{agent.area}</span>
+              </div>
+            )}
+            <div>
+              <Phone size={15} className="flex-none" />
+              {phone ? <a href={telHref(phone)} className="font-semibold" style={{ color: "var(--ink)" }}>{phone}</a> : <span>No phone number added yet</span>}
+            </div>
+            {agent.verifiedAt && (
+              <div>
+                <BadgeCheck size={15} className="flex-none" /> <span>Verified {formatShortDate(agent.verifiedAt)}</span>
+              </div>
+            )}
+          </div>
+          <div className="pk-agent-actions">
+            {phone && (
+              <a className="pk-btn-primary" href={telHref(phone)}>
+                <Phone size={15} /> Call
+              </a>
+            )}
+            {whatsapp && (
+              <a className="pk-btn-wa" href={whatsapp} target="_blank" rel="noopener noreferrer">
+                <MessageCircle size={15} /> WhatsApp
+              </a>
+            )}
+            <a className="pk-btn-outline" href={`mailto:${SITE_CONFIG.contactEmail}?subject=${encodeURIComponent("Enquiry about agent " + agent.name)}`}>
+              <Mail size={15} /> Email enquiry
+            </a>
+          </div>
+        </div>
+      </div>
+
+      <div className="pk-agent-tabs" role="tablist" aria-label="Agent sections">
+        <button
+          type="button"
+          role="tab"
+          id="pk-agent-tab-properties"
+          aria-selected={tab === "properties"}
+          aria-controls="pk-agent-panel-properties"
+          className="pk-agent-tab"
+          onClick={() => setTab("properties")}
+        >
+          <HomeIcon size={15} /> Properties ({listings.length})
+        </button>
+        <button
+          type="button"
+          role="tab"
+          id="pk-agent-tab-rate"
+          aria-selected={tab === "rate"}
+          aria-controls="pk-agent-panel-rate"
+          className="pk-agent-tab"
+          onClick={() => setTab("rate")}
+        >
+          <Star size={15} /> {myRating ? "Your rating" : "Rate this agent"}
+        </button>
+      </div>
+
+      <div className="mt-6">
+        {tab === "properties" && (
+          <div role="tabpanel" id="pk-agent-panel-properties" aria-labelledby="pk-agent-tab-properties">
+            {listings.length === 0 ? (
+              <div className="pk-empty-state" style={{ padding: "40px 20px" }}>
+                <HomeIcon size={32} strokeWidth={1.5} className="pk-ink-soft mx-auto mb-4" />
+                <h3 className="pk-display text-xl font-semibold mb-2">No properties right now</h3>
+                <p className="pk-ink-soft text-sm max-w-sm mx-auto">{agent.name} doesn't have any live listings at the moment. Check back soon.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+                {listings.map((p) => (
+                  <PropertyCard key={p.id} property={p} isFavorite={favorites.has(p.id)} onToggleFavorite={onToggleFavorite} onSelect={onOpenListing} />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+        {tab === "rate" && <AgentRatePanel agent={agent} mine={myRating} onSubmit={onRate} onRemove={onRemoveRating} />}
+      </div>
+    </section>
+  );
+}
+
+// Dashboard view for the superadmin (every agent) and for an agency (its own agents): the scores visitors gave.
+function AgentRatingsPanel({ agents, ratings, scope = "all" }) {
+  const [sort, setSort] = useState("high");
+  const [openIds, setOpenIds] = useState(new Set());
+  const toggle = (id) =>
+    setOpenIds((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+
+  const rows = agents.map((a) => ({ agent: a, stats: ratingStats(ratings, a.id) }));
+  const latest = (r) => r.stats.list.reduce((m, x) => Math.max(m, new Date(x.updatedAt || x.createdAt || 0).getTime() || 0), 0);
+  const sorters = {
+    high: (x, y) => (y.stats.avg ?? -1) - (x.stats.avg ?? -1) || y.stats.count - x.stats.count,
+    low: (x, y) => (x.stats.avg ?? 99) - (y.stats.avg ?? 99) || y.stats.count - x.stats.count,
+    most: (x, y) => y.stats.count - x.stats.count || (y.stats.avg ?? -1) - (x.stats.avg ?? -1),
+    recent: (x, y) => latest(y) - latest(x),
+  };
+  const sorted = [...rows].sort(sorters[sort]);
+  const totalCount = rows.reduce((n, r) => n + r.stats.count, 0);
+  const totalSum = rows.reduce((n, r) => n + r.stats.counts.reduce((s, c, i) => s + c * (i + 1), 0), 0);
+  const agentsRated = rows.filter((r) => r.stats.count > 0).length;
+  const SORTS = [
+    { key: "high", label: "Highest rated" },
+    { key: "low", label: "Lowest rated" },
+    { key: "most", label: "Most ratings" },
+    { key: "recent", label: "Latest" },
+  ];
+
+  return (
+    <div>
+      <h2 className="pk-display text-2xl font-semibold mb-1">Agent ratings</h2>
+      <p className="pk-ink-soft text-sm mb-4">
+        {scope === "agency"
+          ? "What visitors with an account rated the agents under your agency. Only you and the superadmin can see these scores; agents and the public cannot."
+          : "What visitors with an account rated every agent. Only the superadmin and each agent's own agency can see these scores; the public and agents cannot."}
+      </p>
+
+      <div className="pk-rating-summary">
+        <div className="pk-rating-tile">
+          <span className="pk-ink-soft text-xs uppercase tracking-wide">Average score</span>
+          <strong>{totalCount ? (totalSum / totalCount).toFixed(1) : "—"}</strong>
+          {totalCount > 0 && <StarsRow value={totalSum / totalCount} size={14} />}
+        </div>
+        <div className="pk-rating-tile">
+          <span className="pk-ink-soft text-xs uppercase tracking-wide">Ratings</span>
+          <strong>{totalCount}</strong>
+        </div>
+        <div className="pk-rating-tile">
+          <span className="pk-ink-soft text-xs uppercase tracking-wide">Agents rated</span>
+          <strong>
+            {agentsRated}
+            <span className="pk-ink-soft text-base"> / {agents.length}</span>
+          </strong>
+        </div>
+      </div>
+
+      {agents.length === 0 ? (
+        <p className="pk-ink-soft text-sm">{scope === "agency" ? "No agents are assigned to your agency yet." : "No agents yet."}</p>
+      ) : (
+        <>
+          <div className="pk-chip-row mb-4" role="group" aria-label="Sort ratings">
+            {SORTS.map((s) => (
+              <button key={s.key} type="button" className={`pk-chip ${sort === s.key ? "pk-chip-active" : ""}`} aria-pressed={sort === s.key} onClick={() => setSort(s.key)}>
+                {s.label}
+              </button>
+            ))}
+          </div>
+          <div className="pk-admin-listing-list">
+            {sorted.map(({ agent: a, stats }) => {
+              const isOpen = openIds.has(a.id);
+              const attention = stats.count >= 3 && stats.avg < 3;
+              return (
+                <div key={a.id} className="pk-admin-card">
+                  <div className="pk-admin-listing-row">
+                    <ImageWithFallback src={a.img} alt={a.name} className="pk-agent-photo" iconFallback={Users} />
+                    <div className="pk-admin-listing-info">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-semibold">{a.name}</span>
+                        {attention && (
+                          <span className="pk-status-badge" style={{ "--badge-color": "var(--brick)" }}>
+                            Low score
+                          </span>
+                        )}
+                      </div>
+                      <p className="pk-ink-soft text-xs">{a.agency || "Independent"}</p>
+                      <StaffScore stats={stats} />
+                    </div>
+                    <div className="pk-admin-listing-actions">
+                      <button
+                        className="pk-icon-btn"
+                        title={isOpen ? "Hide ratings" : "Show ratings"}
+                        aria-label={isOpen ? "Hide ratings" : "Show ratings"}
+                        aria-expanded={isOpen}
+                        onClick={() => toggle(a.id)}
+                        disabled={stats.count === 0}
+                      >
+                        {isOpen ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+                      </button>
+                    </div>
+                  </div>
+                  {isOpen && stats.count > 0 && (
+                    <div className="pk-admin-expand">
+                      <div className="pk-admin-expand-grid">
+                        <div>
+                          <div className="pk-admin-expand-label">Breakdown</div>
+                          <div className="flex flex-col gap-1.5">
+                            {[5, 4, 3, 2, 1].map((n) => (
+                              <div key={n} className="pk-dist-row">
+                                <span className="pk-mono w-8 flex-none">{n} ★</span>
+                                <span className="pk-rating-bar" aria-hidden="true">
+                                  <span style={{ width: `${(stats.counts[n - 1] / stats.count) * 100}%` }} />
+                                </span>
+                                <span className="pk-ink-soft w-6 text-right flex-none">{stats.counts[n - 1]}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="pk-admin-expand-label">What people said</div>
+                          <div className="flex flex-col gap-2">
+                            {[...stats.list]
+                              .sort((x, y) => new Date(y.updatedAt || 0) - new Date(x.updatedAt || 0))
+                              .map((r, i) => (
+                                <div key={r.id || i} className="pk-agent-comment">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <StarsRow value={r.stars} size={12} />
+                                    <span className="font-semibold">{r.raterName || "Visitor"}</span>
+                                    <span className="pk-ink-soft">· {formatShortDate(r.updatedAt || r.createdAt)}</span>
+                                  </div>
+                                  {r.comment ? <p>{r.comment}</p> : <p className="italic">No comment.</p>}
+                                </div>
+                              ))}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function AgentsPage({ agents, listings = [], onBackHome, onOpenVerification, locked = false, onOpenAgent }) {
   const visible = agents.filter((a) => a.status === "verified");
   const [contactOpen, setContactOpen] = useState(false);
 
@@ -2613,7 +3167,7 @@ function AgentsPage({ agents, onBackHome, onOpenModal, onOpenVerification, locke
       </p>
       <h1 className="pk-display text-3xl md:text-5xl font-semibold mb-2">Our agents</h1>
       <p className="pk-ink-soft">
-        {visible.length} verified agent{visible.length === 1 ? "" : "s"}.{" "}
+        {visible.length} verified agent{visible.length === 1 ? "" : "s"}. Tap an agent to see their details and properties.{" "}
         <button className="pk-primary-text font-semibold underline" onClick={onOpenVerification}>
           What does Verified mean?
         </button>
@@ -2632,54 +3186,7 @@ function AgentsPage({ agents, onBackHome, onOpenModal, onOpenVerification, locke
 
       <div className="pk-agents-grid">
         {visible.map((a) => (
-          <div
-            key={a.id}
-            className="pk-card p-6 flex flex-col items-center text-center gap-2"
-            {...(locked
-              ? {
-                  role: "button",
-                  tabIndex: 0,
-                  style: { cursor: "pointer" },
-                  onClick: onRequireAccount,
-                  onKeyDown: (e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      onRequireAccount();
-                    }
-                  },
-                }
-              : {})}
-          >
-            <ImageWithFallback src={a.img} alt={a.name} className="pk-agent-photo-lg" iconFallback={Users} />
-            <h3 className="font-semibold mt-2 flex items-center gap-1">
-              {a.name}
-              {a.status === "verified" && <VerifiedBadge size={15} />}
-            </h3>
-            <p className="pk-primary-text text-xs font-semibold">{a.focus}</p>
-            <p className="pk-ink-soft text-xs flex items-center gap-1">
-              <MapPin size={12} /> {a.area}
-            </p>
-            {a.verifiedAt && <p className="pk-ink-soft text-xs">Verified {formatShortDate(a.verifiedAt)}</p>}
-            <AgentScore rating={a.rating} reviews={a.reviews} />
-            {locked ? (
-              <button
-                className="pk-btn-outline mt-3"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onRequireAccount();
-                }}
-              >
-                <Mail size={14} /> Enquire
-              </button>
-            ) : (
-              <a
-                className="pk-btn-outline mt-3"
-                href={`mailto:${SITE_CONFIG.contactEmail}?subject=${encodeURIComponent("Enquiry about agent " + a.name)}`}
-              >
-                <Mail size={14} /> Enquire
-              </a>
-            )}
-          </div>
+          <AgentCard key={a.id} agent={a} onOpen={onOpenAgent} propertyCount={locked ? undefined : agentListings(a, listings).length} />
         ))}
       </div>
 
@@ -4018,8 +4525,46 @@ const AGENT_FOCUS_OPTIONS = ["Residential Sales", "Rentals", "Commercial Leasing
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// Lets an agency or the superadmin add or change an agent's phone number after the agent was created.
+function AgentPhoneEditor({ agent, onSave }) {
+  const [value, setValue] = useState(agent.phone || "");
+  const [error, setError] = useState("");
+  useEffect(() => {
+    setValue(agent.phone || "");
+  }, [agent.phone]);
+  const dirty = value.trim() !== (agent.phone || "");
+  const save = () => {
+    const problem = phoneProblem(value);
+    if (problem) {
+      setError(problem);
+      return;
+    }
+    setError("");
+    onSave(agent, value.trim());
+  };
+  return (
+    <div>
+      <div className="flex gap-2">
+        <input
+          aria-label={`Phone number for ${agent.name}`}
+          className="pk-note-input"
+          type="tel"
+          inputMode="tel"
+          placeholder="e.g. 0712 345 678"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+        />
+        <button type="button" className="pk-btn-outline" onClick={save} disabled={!dirty}>
+          Save
+        </button>
+      </div>
+      {error && <p className="pk-admin-error mt-2">{error}</p>}
+    </div>
+  );
+}
+
 function AgentForm({ agencyLocked, agencySuggestions = [], onSubmit, allowLogin = false }) {
-  const blank = { name: "", focus: AGENT_FOCUS_OPTIONS[0], area: "", agency: agencyLocked || "", img: "", loginEmail: "" };
+  const blank = { name: "", focus: AGENT_FOCUS_OPTIONS[0], area: "", agency: agencyLocked || "", phone: "", img: "", loginEmail: "" };
   const [form, setForm] = useState(blank);
   const [error, setError] = useState("");
   const [done, setDone] = useState("");
@@ -4048,6 +4593,11 @@ function AgentForm({ agencyLocked, agencySuggestions = [], onSubmit, allowLogin 
     }
     if (form.img && ((REMOTE && form.img.startsWith("data:")) || !isSafeImageSrc(form.img))) {
       setError("The photo link must start with https:// (or upload a photo).");
+      return;
+    }
+    const badPhone = phoneProblem(form.phone);
+    if (badPhone) {
+      setError(badPhone);
       return;
     }
     const loginEmail = allowLogin ? form.loginEmail.trim().toLowerCase() : "";
@@ -4089,6 +4639,10 @@ function AgentForm({ agencyLocked, agencySuggestions = [], onSubmit, allowLogin 
         <label>
           Area covered
           <input value={form.area} onChange={(e) => setForm({ ...form, area: e.target.value })} placeholder="e.g. Milimani & Section 58" required />
+        </label>
+        <label>
+          Phone number
+          <input type="tel" inputMode="tel" autoComplete="off" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="e.g. 0712 345 678" />
         </label>
         <label>
           Agency
@@ -4279,7 +4833,7 @@ function VerifyDialog({ agent, onConfirm, onCancel }) {
   );
 }
 
-function AdminAgentsPanel({ agents, onUpdateAgents, onToast, agencies = [], agentLogins = [], onUpdateAgentLogins }) {
+function AdminAgentsPanel({ agents, onUpdateAgents, onToast, agencies = [], agentLogins = [], onUpdateAgentLogins, ratings = [] }) {
   const loginActions = makeLoginActions({
     allAgents: agents,
     agentLogins,
@@ -4305,6 +4859,7 @@ function AdminAgentsPanel({ agents, onUpdateAgents, onToast, agencies = [], agen
       name: data.name.trim(),
       focus: data.focus,
       area: data.area.trim(),
+      phone: String(data.phone || "").trim(),
       agency: data.agency,
       status: "unverified",
       rating: null,
@@ -4344,6 +4899,10 @@ function AdminAgentsPanel({ agents, onUpdateAgents, onToast, agencies = [], agen
     if (status === "verified") onToast?.(`${agent.name} verified`, "success");
     else if (status === "banned") onToast?.(`${agent.name} banned`, "danger");
     setConfirmAction(null);
+  };
+  const savePhone = (agent, phone) => {
+    onUpdateAgents(agents.map((x) => (x.id === agent.id ? { ...x, phone } : x)));
+    onToast?.(phone ? `Phone saved for ${agent.name}` : `Phone removed for ${agent.name}`, "success");
   };
   const deleteAgent = (id) => {
     const agent = agents.find((a) => a.id === id);
@@ -4419,9 +4978,11 @@ function AdminAgentsPanel({ agents, onUpdateAgents, onToast, agencies = [], agen
                 <div className="pk-admin-expand-grid">
                   <div>
                     <div className="pk-admin-expand-label">Score</div>
-                    <AgentScore rating={a.rating} reviews={a.reviews} />
+                    <StaffScore stats={ratingStats(ratings, a.id)} />
                     <div className="pk-admin-expand-label mt-4">Agency</div>
                     <p className="pk-ink-soft text-sm">{a.agency || "Independent"}</p>
+                    <div className="pk-admin-expand-label mt-4">Phone number</div>
+                    <AgentPhoneEditor agent={a} onSave={savePhone} />
                     {REMOTE && onUpdateAgentLogins && (
                       <AgentAccess agent={a} login={loginActions.loginFor(a)} onGrant={loginActions.grant} onSetStatus={loginActions.setStatus} onRevoke={loginActions.revoke} />
                     )}
@@ -4605,7 +5166,7 @@ function AgencyListingsPanel({ role = "agency", agency, userName, listings, allL
   );
 }
 
-function AgencyAgentsPanel({ agents, allAgents, onUpdateAgents, adminName, agency, agentLogins = [], onUpdateAgentLogins, onToast }) {
+function AgencyAgentsPanel({ agents, allAgents, onUpdateAgents, adminName, agency, agentLogins = [], onUpdateAgentLogins, onToast, ratings = [] }) {
   const loginActions = makeLoginActions({ allAgents, agentLogins, onUpdateAgentLogins, onToast });
   const [drafts, setDrafts] = useState({});
   const [expandedIds, setExpandedIds] = useState(new Set());
@@ -4624,6 +5185,7 @@ function AgencyAgentsPanel({ agents, allAgents, onUpdateAgents, adminName, agenc
       name: data.name.trim(),
       focus: data.focus,
       area: data.area.trim(),
+      phone: String(data.phone || "").trim(),
       agency,
       status: "unverified",
       rating: null,
@@ -4638,6 +5200,11 @@ function AgencyAgentsPanel({ agents, allAgents, onUpdateAgents, adminName, agenc
     onUpdateAgents([...allAgents, newAgent]);
     if (data.loginEmail) onUpdateAgentLogins([...agentLogins, loginActions.newLogin(newAgent, data.loginEmail)]);
     return "";
+  };
+
+  const savePhone = (agent, phone) => {
+    onUpdateAgents(allAgents.map((x) => (x.id === agent.id ? { ...x, phone } : x)));
+    onToast?.(phone ? `Phone saved for ${agent.name}` : `Phone removed for ${agent.name}`, "success");
   };
 
   const addComment = (agentId) => {
@@ -4672,7 +5239,7 @@ function AgencyAgentsPanel({ agents, allAgents, onUpdateAgents, adminName, agenc
                 <div className="pk-ink-soft text-xs">
                   {a.focus} · {a.area}
                 </div>
-                <AgentScore rating={a.rating} reviews={a.reviews} />
+                <StaffScore stats={ratingStats(ratings, a.id)} />
               </div>
               <div className="pk-admin-listing-actions">
                 <button className="pk-icon-btn" title={expandedIds.has(a.id) ? "Collapse" : "View notes"} aria-label={expandedIds.has(a.id) ? "Collapse" : "View notes"} onClick={() => toggleExpand(a.id)}>
@@ -4687,6 +5254,10 @@ function AgencyAgentsPanel({ agents, allAgents, onUpdateAgents, adminName, agenc
                     <AgentAccess agent={a} login={loginActions.loginFor(a)} onGrant={loginActions.grant} onSetStatus={loginActions.setStatus} onRevoke={loginActions.revoke} />
                   </div>
                 )}
+                <div className="mb-4">
+                  <div className="pk-admin-expand-label">Phone number</div>
+                  <AgentPhoneEditor agent={a} onSave={savePhone} />
+                </div>
                 <div className="pk-admin-expand-label">Notes</div>
                 <div className="flex flex-col gap-2 mb-3">
                   {(a.comments || []).length === 0 && <p className="pk-ink-soft text-xs">No notes yet.</p>}
@@ -4777,7 +5348,7 @@ function useConsoleToasts() {
 }
 
 // An agency sees its own listings and its agents' listings, and can edit any of them.
-function AgencyConsole({ theme, setTheme, onExit, currentAgency, listings, onUpdateListings, agents, onUpdateAgents, agentLogins, onUpdateAgentLogins }) {
+function AgencyConsole({ theme, setTheme, onExit, currentAgency, listings, onUpdateListings, agents, onUpdateAgents, agentLogins, onUpdateAgentLogins, ratings = [] }) {
   const [tab, setTab] = useState("listings");
   const { toasts, showToast, dismissToast } = useConsoleToasts();
 
@@ -4787,6 +5358,7 @@ function AgencyConsole({ theme, setTheme, onExit, currentAgency, listings, onUpd
   const TABS = [
     { key: "listings", label: "Listings", icon: ClipboardList },
     { key: "agents", label: "My Agents", icon: BadgeCheck },
+    { key: "ratings", label: "Ratings", icon: Star },
   ];
 
   return (
@@ -4823,8 +5395,10 @@ function AgencyConsole({ theme, setTheme, onExit, currentAgency, listings, onUpd
           agentLogins={agentLogins}
           onUpdateAgentLogins={onUpdateAgentLogins}
           onToast={showToast}
+          ratings={ratings}
         />
       )}
+      {tab === "ratings" && <AgentRatingsPanel agents={myAgents} ratings={ratings} scope="agency" />}
     </StaffConsoleShell>
   );
 }
@@ -4861,7 +5435,7 @@ function AgentConsole({ theme, setTheme, onExit, currentAgent, listings, onUpdat
   );
 }
 
-function AdminConsole({ theme, setTheme, onExit, adminName, listings, onUpdateListings, agents, onUpdateAgents, agencies, onUpdateAgencies, agentLogins, onUpdateAgentLogins }) {
+function AdminConsole({ theme, setTheme, onExit, adminName, listings, onUpdateListings, agents, onUpdateAgents, agencies, onUpdateAgencies, agentLogins, onUpdateAgentLogins, ratings = [] }) {
   const [tab, setTab] = useState("overview");
   const [tabIntent, setTabIntent] = useState(null);
   const [stats, setStats] = useState(null);
@@ -4916,6 +5490,7 @@ function AdminConsole({ theme, setTheme, onExit, adminName, listings, onUpdateLi
     { key: "listings", label: "Listings", icon: ClipboardList, badge: pendingListings, attention: pendingListings > 0 },
     { key: "agencies", label: "Agencies", icon: UserCog, badge: agencies.length },
     { key: "agents", label: "Agents", icon: BadgeCheck, badge: unverifiedAgents, attention: unverifiedAgents > 0 },
+    { key: "ratings", label: "Ratings", icon: Star },
   ];
   const activeTab = TABS.find((t) => t.key === tab) || TABS[0];
   const navigate = (key, intent = null) => {
@@ -4993,11 +5568,13 @@ function AdminConsole({ theme, setTheme, onExit, adminName, listings, onUpdateLi
                 agents={agents}
                 onUpdateAgents={onUpdateAgents}
                 onToast={showToast}
+                ratings={ratings}
                 agencies={agencies}
                 agentLogins={agentLogins}
                 onUpdateAgentLogins={onUpdateAgentLogins}
               />
             )}
+            {tab === "ratings" && <AgentRatingsPanel agents={agents} ratings={ratings} scope="all" />}
           </div>
         </main>
       </div>
@@ -5018,6 +5595,7 @@ export default function App() {
   const [scrolled, setScrolled] = useState(false);
   const [page, setPage] = useState("home");
   const [selectedPropertyId, setSelectedPropertyId] = useState(null);
+  const [selectedAgentId, setSelectedAgentId] = useState(null);
   const [activeTab, setActiveTab] = useState("buy");
   const [listingCategory, setListingCategory] = useState("buy");
   const [sortBy, setSortBy] = useState(SORT_OPTIONS[0]);
@@ -5056,6 +5634,8 @@ export default function App() {
   const [agents, setAgents] = useState(AGENTS);
   const [agencies, setAgencies] = useState([]);
   const [agentLogins, setAgentLogins] = useState([]);
+  const [ratings, setRatings] = useState([]);
+  const [localRaterId] = useState(getLocalRaterId);
   const [staffState, setStaffState] = useState("unknown");
   const [mfaFactorId, setMfaFactorId] = useState("");
   const [mfaTick, setMfaTick] = useState(0);
@@ -5215,6 +5795,23 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Without a shared database (local testing), ratings are kept in this browser.
+  useEffect(() => {
+    if (REMOTE) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await window.storage.get(STORAGE_KEYS.ratings, true);
+        if (!cancelled && res && res.value) setRatings(JSON.parse(res.value));
+      } catch (e) {
+        /* no ratings saved yet */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const refreshRemote = async () => {
     try {
       // Agents sign in as staff too, but only agencies and the superadmin get the private agent notes and logins.
@@ -5223,6 +5820,7 @@ export default function App() {
       setAgents(data.agents);
       if (data.agencies) setAgencies(data.agencies);
       if (data.agentLogins) setAgentLogins(data.agentLogins);
+      if (data.ratings) setRatings(data.ratings);
     } catch (e) {
       /* keep what is on screen */
     } finally {
@@ -5277,6 +5875,44 @@ export default function App() {
     }
     setAgents(next);
     window.storage?.set(STORAGE_KEYS.agents, JSON.stringify(next), true).catch(() => {});
+  };
+
+  // ---------- Rating an agent ----------
+  // Remote: one rating per person per agent, kept by the database (saving again updates it).
+  const myRaterId = REMOTE ? (account && account.id) || "" : localRaterId;
+  const saveLocalRatings = (next) => {
+    setRatings(next);
+    window.storage?.set(STORAGE_KEYS.ratings, JSON.stringify(next), true).catch(() => {});
+  };
+  const rateAgent = async (agentId, stars, comment) => {
+    const raterName = String((account && account.name) || (currentUser && currentUser.name) || "Visitor").trim().slice(0, 80);
+    const now = new Date().toISOString();
+    if (REMOTE) {
+      const session = await getValidSession();
+      if (!session) throw Object.assign(new Error("Not signed in"), { status: 401 });
+      const rows = await sbRequest("/rest/v1/agent_ratings?on_conflict=agent_id,user_id", {
+        method: "POST",
+        token: session.access_token,
+        headers: { Prefer: "resolution=merge-duplicates,return=representation" },
+        body: { agent_id: agentId, stars, comment, rater_name: raterName },
+      });
+      const saved = Array.isArray(rows) && rows[0] ? ratingFromRow(rows[0]) : { id: `${agentId}-${myRaterId}`, agentId, userId: myRaterId, stars, comment, raterName, createdAt: now, updatedAt: now };
+      setRatings((prev) => [saved, ...prev.filter((r) => !(r.agentId === agentId && r.userId === myRaterId))]);
+      return;
+    }
+    const existing = ratings.find((r) => r.agentId === agentId && r.userId === myRaterId);
+    const entry = { id: existing ? existing.id : `${agentId}-${myRaterId}`, agentId, userId: myRaterId, stars, comment, raterName, createdAt: existing ? existing.createdAt : now, updatedAt: now };
+    saveLocalRatings([entry, ...ratings.filter((r) => !(r.agentId === agentId && r.userId === myRaterId))]);
+  };
+  const removeAgentRating = async (agentId) => {
+    if (REMOTE) {
+      const session = await getValidSession();
+      if (!session) throw Object.assign(new Error("Not signed in"), { status: 401 });
+      await sbRequest(`/rest/v1/agent_ratings?agent_id=eq.${encodeURIComponent(agentId)}`, { method: "DELETE", token: session.access_token });
+      setRatings((prev) => prev.filter((r) => !(r.agentId === agentId && r.userId === myRaterId)));
+      return;
+    }
+    saveLocalRatings(ratings.filter((r) => !(r.agentId === agentId && r.userId === myRaterId)));
   };
 
   useEffect(() => {
@@ -5500,6 +6136,34 @@ export default function App() {
     openAuth("signup", GATE_AGENT_MESSAGE);
   };
 
+  const viewAgent = (id) => {
+    setSelectedAgentId(id);
+    logEvent("pageViews");
+    setPage("agent");
+    setScrollTarget("top");
+    setMenuOpen(false);
+  };
+  const openAgent = (id) => {
+    if (locked) {
+      saveIntent(`/agent/${id}`);
+      openAuth("signup", GATE_AGENT_MESSAGE);
+      return;
+    }
+    viewAgent(id);
+  };
+  // Someone arriving straight on an agent's address sees the sign-up pop-up once.
+  const gateAutoForAgent = useRef(null);
+  useEffect(() => {
+    if (!(page === "agent" && locked && authChecked)) return;
+    if (gateAutoForAgent.current === selectedAgentId) return;
+    gateAutoForAgent.current = selectedAgentId;
+    saveIntent(`/agent/${selectedAgentId}`);
+    setAuthIntro(GATE_AGENT_MESSAGE);
+    setAuthTab("signup");
+    setAuthOpen(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, locked, authChecked, selectedAgentId]);
+
   const closeSearchSheet = () => setSearchSheetOpen(false);
   const handleShortcut = (key) => {
     if (key === "agents") {
@@ -5546,6 +6210,7 @@ export default function App() {
     if (page === "listings") return listingCategory === "all" ? "/listings" : `/${listingCategory}`;
     if (page === "detail" && selectedPropertyId !== null) return `/listing/${selectedPropertyId}`;
     if (page === "agents") return "/agents";
+    if (page === "agent" && selectedAgentId !== null) return `/agent/${selectedAgentId}`;
     if (page === "advertise") return "/advertise";
     if (page === "privacy") return "/privacy";
     if (page === "terms") return "/terms";
@@ -5579,6 +6244,9 @@ export default function App() {
     if (detail) {
       setSelectedPropertyId(Number(detail[1]));
       setPage("detail");
+    } else if (clean.match(/^\/agent\/(\d+)$/)) {
+      setSelectedAgentId(Number(clean.match(/^\/agent\/(\d+)$/)[1]));
+      setPage("agent");
     } else if (clean === "/agents") {
       setPage("agents");
     } else if (clean === "/advertise") {
@@ -5638,7 +6306,7 @@ export default function App() {
     }
     firstAddressSync.current = false;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [routerReady, page, listingCategory, selectedPropertyId]);
+  }, [routerReady, page, listingCategory, selectedPropertyId, selectedAgentId]);
 
   // Keep the search filters in the address while on a listings page.
   useEffect(() => {
@@ -5698,6 +6366,8 @@ export default function App() {
   const heroFeatured = useMemo(() => approvedListings.filter(isFeatured).sort((a, b) => b.id - a.id).slice(0, 5), [approvedListings]);
 
   const selectedProperty = approvedListings.find((p) => p.id === selectedPropertyId) || null;
+  const selectedAgent = agents.find((a) => a.id === selectedAgentId && a.status === "verified") || null;
+  const myRatingForSelected = selectedAgent ? ratings.find((r) => r.agentId === selectedAgent.id && r.userId === myRaterId) || null : null;
 
   useEffect(() => {
     const base = SITE_CONFIG.name;
@@ -5706,6 +6376,10 @@ export default function App() {
     const names = { buy: "Homes for sale", rent: "Homes to rent", commercial: "Commercial spaces", land: "Land for sale", all: "All listings" };
     if (page === "listings") title = `${names[listingCategory] || "Listings"} | ${base}`;
     else if (page === "agents") title = `Our agents | ${base}`;
+    else if (page === "agent") {
+      const ag = agents.find((x) => x.id === selectedAgentId);
+      title = ag ? `${ag.name}, agent | ${base}` : `Agent | ${base}`;
+    }
     else if (page === "advertise") title = `Promote your listing | ${base}`;
     else if (page === "privacy") title = `Privacy Policy | ${base}`;
     else if (page === "terms") title = `Terms of Use | ${base}`;
@@ -5719,7 +6393,7 @@ export default function App() {
     document.title = title;
     const meta = document.querySelector('meta[name="description"]');
     if (meta) meta.setAttribute("content", desc);
-  }, [page, listingCategory, selectedProperty, currentUser && currentUser.role]);
+  }, [page, listingCategory, selectedProperty, selectedAgentId, agents, currentUser && currentUser.role]);
   const similarProperties = useMemo(() => {
     if (!selectedProperty) return [];
     return approvedListings.filter((p) => p.tag === selectedProperty.tag && p.id !== selectedProperty.id).slice(0, 3);
@@ -5729,7 +6403,7 @@ export default function App() {
       ? listingCategory
       : page === "detail" && selectedProperty
       ? selectedProperty.tag.toLowerCase()
-      : page === "agents"
+      : page === "agents" || page === "agent"
       ? "agents"
       : null;
 
@@ -6022,6 +6696,7 @@ export default function App() {
     setCurrentUser(null);
     setStaffState("unknown");
     setFavorites(new Set()); // don't leave one person's saved list on a shared device
+    setRatings([]);
     setMenuOpen(false);
     goHome();
     if (session) authApi.signOut(session.access_token);
@@ -6098,6 +6773,7 @@ export default function App() {
             onUpdateListings={updateListings}
             agents={agents}
             onUpdateAgents={updateAgents}
+            ratings={ratings}
             agencies={agencies}
             onUpdateAgencies={updateAgencies}
             agentLogins={agentLogins}
@@ -6109,6 +6785,7 @@ export default function App() {
             setTheme={setTheme}
             onExit={handleLogout}
             currentAgency={currentUser}
+            ratings={ratings}
             listings={listings}
             onUpdateListings={updateListings}
             agents={agents}
@@ -6556,33 +7233,7 @@ import.meta.env.PROD ? (
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5 md:gap-5">
           {verifiedAgents.map((a) => (
-            <div
-              key={a.id}
-              className="pk-card p-3 md:p-5 flex flex-col items-center text-center gap-1.5"
-              {...(locked
-                ? {
-                    role: "button",
-                    tabIndex: 0,
-                    style: { cursor: "pointer" },
-                    onClick: requireAccountForAgents,
-                    onKeyDown: (e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        e.preventDefault();
-                        requireAccountForAgents();
-                      }
-                    },
-                  }
-                : {})}
-            >
-              <ImageWithFallback src={a.img} alt={a.name} className="pk-agent-photo" iconFallback={Users} />
-              <h3 className="font-semibold mt-1 flex items-center gap-1">
-                {a.name}
-                {a.status === "verified" && <VerifiedBadge size={14} />}
-              </h3>
-              <p className="pk-primary-text text-xs font-semibold">{a.focus}</p>
-              <p className="pk-ink-soft text-xs">{a.area}</p>
-              <AgentScore rating={a.rating} reviews={a.reviews} />
-            </div>
+            <AgentCard key={a.id} agent={a} onOpen={openAgent} propertyCount={locked ? undefined : agentListings(a, approvedListings).length} />
           ))}
         </div>
       </section>
@@ -6709,7 +7360,61 @@ import.meta.env.PROD ? (
         </section>
       )}
 
-      {page === "agents" && <AgentsPage agents={agents} onBackHome={goHome} onOpenModal={openAuth} onOpenVerification={goToVerification} locked={locked} onRequireAccount={requireAccountForAgents} />}
+      {page === "agents" && <AgentsPage agents={agents} listings={approvedListings} onBackHome={goHome} onOpenVerification={goToVerification} locked={locked} onOpenAgent={openAgent} />}
+
+      {page === "agent" && locked && authChecked && (
+        <section className="mx-auto max-w-2xl px-4 pt-16 md:pt-24 pb-24 text-center">
+          {selectedAgent && (
+            <div className="mb-6 flex flex-col items-center">
+              <ImageWithFallback src={selectedAgent.img} alt={selectedAgent.name} className="pk-agent-profile-photo" iconFallback={Users} eager />
+              <h2 className="pk-display text-2xl font-semibold mt-4">{selectedAgent.name}</h2>
+              <p className="pk-ink-soft text-sm mt-1">{[selectedAgent.focus, selectedAgent.area].filter(Boolean).join(" · ")}</p>
+            </div>
+          )}
+          <h1 className="pk-display text-3xl font-semibold mb-3">Create a free account to see agent details</h1>
+          <p className="pk-ink-soft text-sm mb-6">Phone numbers, properties and ratings are shown to people with an account. It takes a minute.</p>
+          <div className="flex flex-wrap gap-3 justify-center">
+            <button className="pk-btn-primary" onClick={() => openAuth("signup", GATE_AGENT_MESSAGE)}>
+              <UserPlus size={15} /> Create free account
+            </button>
+            <button className="pk-btn-outline" onClick={() => openAuth("login")}>
+              Log in
+            </button>
+          </div>
+        </section>
+      )}
+
+      {page === "agent" && !locked && selectedAgent && (
+        <AgentDetailPage
+          key={selectedAgent.id}
+          agent={selectedAgent}
+          listings={agentListings(selectedAgent, approvedListings)}
+          myRating={myRatingForSelected}
+          favorites={favorites}
+          onToggleFavorite={toggleFavorite}
+          onOpenListing={openListing}
+          onBackHome={goHome}
+          onBackAgents={goToAgents}
+          onRate={rateAgent}
+          onRemoveRating={removeAgentRating}
+        />
+      )}
+
+      {page === "agent" && !locked && !selectedAgent && (
+        <section className="mx-auto max-w-2xl px-4 pt-28 pb-24 text-center">
+          {dataReady ? (
+            <>
+              <h1 className="pk-display text-2xl font-semibold mb-2">This agent isn't available</h1>
+              <p className="pk-ink-soft text-sm mb-6">They may have been removed, or they aren't listed on the site right now.</p>
+              <button className="pk-btn-primary" style={{ margin: "0 auto" }} onClick={goToAgents}>
+                <Users size={15} /> See all agents
+              </button>
+            </>
+          ) : (
+            <p className="pk-ink-soft text-sm">Loading…</p>
+          )}
+        </section>
+      )}
 
       {page === "advertise" && <AdvertisePage onBackHome={goHome} onBrowse={() => goToListings("all")} />}
 
