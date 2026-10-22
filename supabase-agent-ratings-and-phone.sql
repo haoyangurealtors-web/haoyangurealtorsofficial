@@ -10,8 +10,10 @@
 -- Who can see ratings (enforced here, in the database, so it can't be bypassed from the browser)
 --   - The superadmin sees every rating.
 --   - An agency sees the ratings of the agents under its own agency, and no one else's.
---   - A visitor sees only their own ratings.
---   - Agents, and signed-out visitors, see none. Scores are never shown on the public site.
+--   - A visitor sees only their own ratings in the table itself.
+--   - Agents, and signed-out visitors, see none.
+--   - To let signed-in visitors also see averages and comments (first names only), run
+--     supabase-agent-ratings-visible.sql after this file.
 --
 -- Who can give ratings
 --   - Only signed-in visitors with an ordinary account, and only to verified agents.

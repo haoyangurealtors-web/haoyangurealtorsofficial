@@ -1212,3 +1212,12 @@
         .pk-dist-row { display: flex; align-items: center; gap: 8px; font-size: 0.78rem; }
         .pk-rating-bar { flex: 1; height: 8px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
         .pk-rating-bar > span { display: block; height: 100%; border-radius: 999px; background: var(--accent); }
+
+/* Ratings shown to signed-in visitors */
+        .pk-agent-score { display: inline-flex; align-items: center; gap: 6px; font-size: 0.85rem; }
+        .pk-agent-card-score { display: flex; align-items: center; justify-content: center; gap: 5px; margin-top: 4px; font-size: 0.8rem; }
+        .pk-rating-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 32px; }
+        @media (min-width: 900px) { .pk-rating-layout { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 48px; } }
+        .pk-rating-overview { display: flex; flex-wrap: wrap; align-items: center; gap: 24px; padding: 16px 18px; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; }
+        .pk-rating-big { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 96px; }
+        .pk-rating-big strong { font-family: 'Fraunces', serif; font-size: 2.6rem; font-weight: 600; line-height: 1; }

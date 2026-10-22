@@ -633,6 +633,18 @@ function ratingFromRow(r) {
     updatedAt: r.updated_at || r.created_at || "",
   };
 }
+// Averages for every rated agent, readable by any signed-in visitor (the database returns no names here).
+async function fetchRatingSummary(token) {
+  const rows = await sbRequest("/rest/v1/rpc/agent_rating_summary", { method: "POST", token, body: {} });
+  const out = {};
+  (Array.isArray(rows) ? rows : []).forEach((r) => {
+    const count = Number(r.rating_count) || 0;
+    if (!count) return;
+    out[Number(r.agent_id)] = { count, avg: Number(r.avg_stars) || 0, counts: [r.c1, r.c2, r.c3, r.c4, r.c5].map((n) => Number(n) || 0) };
+  });
+  return out;
+}
+const firstNameOf = (name) => String(name || "").trim().split(/\s+/)[0] || "A visitor";
 function ratingStats(ratings, agentId) {
   const list = (ratings || []).filter((r) => r.agentId === agentId && r.stars >= 1 && r.stars <= 5);
   const counts = [0, 0, 0, 0, 0];
@@ -743,6 +755,14 @@ async function fetchRemoteData(isSuperadmin, isStaff = isSuperadmin) {
       ratingRows = null;
     }
   }
+  let ratingSummary = null;
+  if (token) {
+    try {
+      ratingSummary = await fetchRatingSummary(token);
+    } catch (e) {
+      ratingSummary = null; // supabase-agent-ratings-visible.sql hasn't been run yet
+    }
+  }
   let agents = agentRows;
   if (token && isStaff) {
     // Staff also see the private notes and verification details, which are never sent to anyone else.
@@ -762,6 +782,7 @@ async function fetchRemoteData(isSuperadmin, isStaff = isSuperadmin) {
   if (staffRows) data.agencies = staffRows.filter((r) => r.role === "admin").map(staffFromRow);
   if (Array.isArray(loginRows)) data.agentLogins = loginRows.map(agentLoginFromRow);
   if (Array.isArray(ratingRows)) data.ratings = ratingRows.map(ratingFromRow);
+  if (ratingSummary) data.ratingSummary = ratingSummary;
   return data;
 }
 
@@ -2715,7 +2736,7 @@ function StaffScore({ stats }) {
 }
 
 // The card used on the home page and the Agents page. The whole card opens the agent's profile.
-function AgentCard({ agent, onOpen, propertyCount }) {
+function AgentCard({ agent, onOpen, propertyCount, summary }) {
   const open = () => onOpen(agent.id);
   return (
     <div
@@ -2737,6 +2758,13 @@ function AgentCard({ agent, onOpen, propertyCount }) {
         {agent.status === "verified" && <VerifiedBadge size={15} />}
       </h3>
       {agent.focus && <span className="pk-agent-card-focus">{agent.focus}</span>}
+      {summary && summary.count > 0 && (
+        <p className="pk-agent-card-score" aria-label={`Rated ${summary.avg.toFixed(1)} out of 5 from ${summary.count} rating${summary.count === 1 ? "" : "s"}`}>
+          <StarsRow value={summary.avg} size={13} />
+          <span className="pk-mono font-semibold">{summary.avg.toFixed(1)}</span>
+          <span className="pk-ink-soft">({summary.count})</span>
+        </p>
+      )}
       {agent.area && (
         <p className="pk-agent-card-meta">
           <MapPin size={12} className="flex-none" /> <span>{agent.area}</span>
@@ -2840,10 +2868,10 @@ function AgentRatePanel({ agent, mine, onSubmit, onRemove }) {
   };
 
   return (
-    <div className="pk-rate-box" role="tabpanel" id="pk-agent-panel-rate" aria-labelledby="pk-agent-tab-rate">
+    <div className="pk-rate-box">
       <h2 className="pk-display text-xl font-semibold mb-1">{mine ? "Your rating" : `Rate ${agent.name}`}</h2>
       <p className="pk-ink-soft text-sm mb-4">
-        How was your experience with this agent? Your rating is private: only the agent's agency and the {SITE_CONFIG.name} team can see it. It is not shown publicly.
+        How was your experience with this agent? Other signed-in visitors will see your stars and comment with your first name only. The agent can't see who rated them. Signed-out visitors can't see ratings.
       </p>
       <form onSubmit={submit}>
         <StarInput
@@ -2898,10 +2926,98 @@ function AgentRatePanel({ agent, mine, onSubmit, onRemove }) {
   );
 }
 
-function AgentDetailPage({ agent, listings, myRating, favorites, onToggleFavorite, onOpenListing, onBackHome, onBackAgents, onRate, onRemoveRating }) {
+// Score line used on the profile header: stars, the average and how many people rated.
+function RatingScoreLine({ summary }) {
+  if (!summary || summary.count === 0) return <span className="pk-ink-soft text-sm">No ratings yet</span>;
+  return (
+    <span className="pk-agent-score" aria-label={`Rated ${summary.avg.toFixed(1)} out of 5 from ${summary.count} rating${summary.count === 1 ? "" : "s"}`}>
+      <StarsRow value={summary.avg} size={16} />
+      <span className="pk-mono font-semibold">{summary.avg.toFixed(1)}</span>
+      <span className="pk-ink-soft">
+        ({summary.count} rating{summary.count === 1 ? "" : "s"})
+      </span>
+    </span>
+  );
+}
+
+function ReviewsList({ reviews }) {
+  if (reviews === null) return <p className="pk-ink-soft text-sm">Loading reviews…</p>;
+  if (reviews.length === 0) return <p className="pk-ink-soft text-sm">No written reviews yet.</p>;
+  return (
+    <div className="flex flex-col gap-3">
+      {reviews.map((r, i) => (
+        <div key={i} className="pk-agent-comment">
+          <div className="flex items-center gap-2 flex-wrap">
+            <StarsRow value={r.stars} size={13} />
+            <span className="font-semibold">{r.mine ? "You" : r.reviewer}</span>
+            {r.updatedAt && <span className="pk-ink-soft">· {formatShortDate(r.updatedAt)}</span>}
+          </div>
+          <p>{r.comment}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// The Ratings tab: what everyone with an account has said, plus the form to add or change your own rating.
+function AgentRatingsTab({ agent, summary, reviews, myRating, onRate, onRemoveRating }) {
+  const count = summary ? summary.count : 0;
+  return (
+    <div className="pk-rating-layout" role="tabpanel" id="pk-agent-panel-rate" aria-labelledby="pk-agent-tab-rate">
+      <div className="min-w-0">
+        <h2 className="pk-display text-xl font-semibold mb-4">Ratings and reviews</h2>
+        {count === 0 ? (
+          <p className="pk-ink-soft text-sm mb-2">No one has rated {agent.name} yet. You could be the first.</p>
+        ) : (
+          <div className="pk-rating-overview">
+            <div className="pk-rating-big">
+              <strong>{summary.avg.toFixed(1)}</strong>
+              <StarsRow value={summary.avg} size={18} />
+              <span className="pk-ink-soft text-sm">
+                {count} rating{count === 1 ? "" : "s"}
+              </span>
+            </div>
+            <div className="flex flex-col gap-1.5 flex-1 min-w-0">
+              {[5, 4, 3, 2, 1].map((n) => (
+                <div key={n} className="pk-dist-row">
+                  <span className="pk-mono w-8 flex-none">{n} ★</span>
+                  <span className="pk-rating-bar" aria-hidden="true">
+                    <span style={{ width: `${((summary.counts[n - 1] || 0) / count) * 100}%` }} />
+                  </span>
+                  <span className="pk-ink-soft w-6 text-right flex-none">{summary.counts[n - 1] || 0}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        <h3 className="font-semibold mt-6 mb-3">What people said</h3>
+        <ReviewsList reviews={reviews} />
+      </div>
+      <AgentRatePanel agent={agent} mine={myRating} onSubmit={onRate} onRemove={onRemoveRating} />
+    </div>
+  );
+}
+
+function AgentDetailPage({ agent, listings, myRating, summary, loadReviews, reviewsVersion, favorites, onToggleFavorite, onOpenListing, onBackHome, onBackAgents, onRate, onRemoveRating }) {
   const [tab, setTab] = useState("properties");
+  const [reviews, setReviews] = useState(null);
   const phone = String(agent.phone || "").trim();
   const whatsapp = whatsappLink(phone, `Hi ${agent.name}, I found you on ${SITE_CONFIG.name}.`);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.resolve(loadReviews(agent.id))
+      .then((rows) => {
+        if (!cancelled) setReviews(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setReviews([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agent.id, reviewsVersion]);
 
   return (
     <section className="mx-auto max-w-7xl px-4 md:px-8 pt-8 md:pt-12 pb-20">
@@ -2920,6 +3036,9 @@ function AgentDetailPage({ agent, listings, myRating, favorites, onToggleFavorit
             {agent.status === "verified" && <VerifiedBadge size={22} />}
           </h1>
           {agent.focus && <p className="pk-primary-text text-sm font-semibold mt-1">{agent.focus}</p>}
+          <div className="mt-2 flex justify-center md:justify-start">
+            <RatingScoreLine summary={summary} />
+          </div>
           <div className="pk-agent-facts">
             <div>
               <Building2 size={15} className="flex-none" /> <span>{agent.agency ? agent.agency : "Independent agent"}</span>
@@ -2978,7 +3097,7 @@ function AgentDetailPage({ agent, listings, myRating, favorites, onToggleFavorit
           className="pk-agent-tab"
           onClick={() => setTab("rate")}
         >
-          <Star size={15} /> {myRating ? "Your rating" : "Rate this agent"}
+          <Star size={15} /> Ratings{summary && summary.count ? ` (${summary.count})` : ""}
         </button>
       </div>
 
@@ -3000,7 +3119,7 @@ function AgentDetailPage({ agent, listings, myRating, favorites, onToggleFavorit
             )}
           </div>
         )}
-        {tab === "rate" && <AgentRatePanel agent={agent} mine={myRating} onSubmit={onRate} onRemove={onRemoveRating} />}
+        {tab === "rate" && <AgentRatingsTab agent={agent} summary={summary} reviews={reviews} myRating={myRating} onRate={onRate} onRemoveRating={onRemoveRating} />}
       </div>
     </section>
   );
@@ -3041,8 +3160,8 @@ function AgentRatingsPanel({ agents, ratings, scope = "all" }) {
       <h2 className="pk-display text-2xl font-semibold mb-1">Agent ratings</h2>
       <p className="pk-ink-soft text-sm mb-4">
         {scope === "agency"
-          ? "What visitors with an account rated the agents under your agency. Only you and the superadmin can see these scores; agents and the public cannot."
-          : "What visitors with an account rated every agent. Only the superadmin and each agent's own agency can see these scores; the public and agents cannot."}
+          ? "What visitors with an account rated the agents under your agency, with each person's full name. Other signed-in visitors see only the averages and comments (first names). Agents and signed-out visitors see nothing."
+          : "What visitors with an account rated every agent, with each person's full name. Only the superadmin and each agent's own agency see names; other signed-in visitors see only averages and comments (first names). Agents and signed-out visitors see nothing."}
       </p>
 
       <div className="pk-rating-summary">
@@ -3155,7 +3274,7 @@ function AgentRatingsPanel({ agents, ratings, scope = "all" }) {
   );
 }
 
-function AgentsPage({ agents, listings = [], onBackHome, onOpenVerification, locked = false, onOpenAgent }) {
+function AgentsPage({ agents, listings = [], onBackHome, onOpenVerification, locked = false, onOpenAgent, summaryFor = () => null }) {
   const visible = agents.filter((a) => a.status === "verified");
   const [contactOpen, setContactOpen] = useState(false);
 
@@ -3186,7 +3305,7 @@ function AgentsPage({ agents, listings = [], onBackHome, onOpenVerification, loc
 
       <div className="pk-agents-grid">
         {visible.map((a) => (
-          <AgentCard key={a.id} agent={a} onOpen={onOpenAgent} propertyCount={locked ? undefined : agentListings(a, listings).length} />
+          <AgentCard key={a.id} agent={a} onOpen={onOpenAgent} propertyCount={locked ? undefined : agentListings(a, listings).length} summary={locked ? null : summaryFor(a.id)} />
         ))}
       </div>
 
@@ -5635,6 +5754,8 @@ export default function App() {
   const [agencies, setAgencies] = useState([]);
   const [agentLogins, setAgentLogins] = useState([]);
   const [ratings, setRatings] = useState([]);
+  const [ratingSummary, setRatingSummary] = useState({});
+  const [reviewsVersion, setReviewsVersion] = useState(0);
   const [localRaterId] = useState(getLocalRaterId);
   const [staffState, setStaffState] = useState("unknown");
   const [mfaFactorId, setMfaFactorId] = useState("");
@@ -5821,6 +5942,7 @@ export default function App() {
       if (data.agencies) setAgencies(data.agencies);
       if (data.agentLogins) setAgentLogins(data.agentLogins);
       if (data.ratings) setRatings(data.ratings);
+      if (data.ratingSummary) setRatingSummary(data.ratingSummary);
     } catch (e) {
       /* keep what is on screen */
     } finally {
@@ -5884,7 +6006,7 @@ export default function App() {
     setRatings(next);
     window.storage?.set(STORAGE_KEYS.ratings, JSON.stringify(next), true).catch(() => {});
   };
-  const rateAgent = async (agentId, stars, comment) => {
+  const rateAgentCore = async (agentId, stars, comment) => {
     const raterName = String((account && account.name) || (currentUser && currentUser.name) || "Visitor").trim().slice(0, 80);
     const now = new Date().toISOString();
     if (REMOTE) {
@@ -5904,7 +6026,7 @@ export default function App() {
     const entry = { id: existing ? existing.id : `${agentId}-${myRaterId}`, agentId, userId: myRaterId, stars, comment, raterName, createdAt: existing ? existing.createdAt : now, updatedAt: now };
     saveLocalRatings([entry, ...ratings.filter((r) => !(r.agentId === agentId && r.userId === myRaterId))]);
   };
-  const removeAgentRating = async (agentId) => {
+  const removeAgentRatingCore = async (agentId) => {
     if (REMOTE) {
       const session = await getValidSession();
       if (!session) throw Object.assign(new Error("Not signed in"), { status: 401 });
@@ -5913,6 +6035,46 @@ export default function App() {
       return;
     }
     saveLocalRatings(ratings.filter((r) => !(r.agentId === agentId && r.userId === myRaterId)));
+  };
+
+  // What signed-in visitors see: per-agent averages and written reviews (first names only).
+  const summaryFor = (agentId) => {
+    if (!REMOTE) {
+      const st = ratingStats(ratings, agentId);
+      return st.count ? st : null;
+    }
+    return ratingSummary[agentId] || null;
+  };
+  const loadReviews = async (agentId) => {
+    if (!REMOTE) {
+      return ratings
+        .filter((r) => r.agentId === agentId && r.comment)
+        .sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0))
+        .map((r) => ({ stars: r.stars, comment: r.comment, reviewer: firstNameOf(r.raterName), updatedAt: r.updatedAt, mine: r.userId === myRaterId }));
+    }
+    const session = await getValidSession();
+    if (!session) return [];
+    const rows = await sbRequest("/rest/v1/rpc/agent_reviews", { method: "POST", token: session.access_token, body: { p_agent_id: agentId } });
+    return (Array.isArray(rows) ? rows : []).map((r) => ({ stars: Number(r.stars) || 0, comment: r.comment || "", reviewer: r.reviewer || "A visitor", updatedAt: r.updated_at || "", mine: Boolean(r.mine) }));
+  };
+  const refreshRatingSummary = async () => {
+    if (!REMOTE) return;
+    try {
+      const session = await getValidSession();
+      if (session) setRatingSummary(await fetchRatingSummary(session.access_token));
+    } catch (e) {
+      /* the next refresh will pick it up */
+    }
+  };
+  const rateAgent = async (agentId, stars, comment) => {
+    await rateAgentCore(agentId, stars, comment);
+    await refreshRatingSummary();
+    setReviewsVersion((v) => v + 1);
+  };
+  const removeAgentRating = async (agentId) => {
+    await removeAgentRatingCore(agentId);
+    await refreshRatingSummary();
+    setReviewsVersion((v) => v + 1);
   };
 
   useEffect(() => {
@@ -6697,6 +6859,7 @@ export default function App() {
     setStaffState("unknown");
     setFavorites(new Set()); // don't leave one person's saved list on a shared device
     setRatings([]);
+    setRatingSummary({});
     setMenuOpen(false);
     goHome();
     if (session) authApi.signOut(session.access_token);
@@ -7233,7 +7396,7 @@ import.meta.env.PROD ? (
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5 md:gap-5">
           {verifiedAgents.map((a) => (
-            <AgentCard key={a.id} agent={a} onOpen={openAgent} propertyCount={locked ? undefined : agentListings(a, approvedListings).length} />
+            <AgentCard key={a.id} agent={a} onOpen={openAgent} propertyCount={locked ? undefined : agentListings(a, approvedListings).length} summary={locked ? null : summaryFor(a.id)} />
           ))}
         </div>
       </section>
@@ -7360,7 +7523,7 @@ import.meta.env.PROD ? (
         </section>
       )}
 
-      {page === "agents" && <AgentsPage agents={agents} listings={approvedListings} onBackHome={goHome} onOpenVerification={goToVerification} locked={locked} onOpenAgent={openAgent} />}
+      {page === "agents" && <AgentsPage agents={agents} listings={approvedListings} onBackHome={goHome} onOpenVerification={goToVerification} locked={locked} onOpenAgent={openAgent} summaryFor={summaryFor} />}
 
       {page === "agent" && locked && authChecked && (
         <section className="mx-auto max-w-2xl px-4 pt-16 md:pt-24 pb-24 text-center">
@@ -7390,6 +7553,9 @@ import.meta.env.PROD ? (
           agent={selectedAgent}
           listings={agentListings(selectedAgent, approvedListings)}
           myRating={myRatingForSelected}
+          summary={summaryFor(selectedAgent.id)}
+          loadReviews={loadReviews}
+          reviewsVersion={reviewsVersion}
           favorites={favorites}
           onToggleFavorite={toggleFavorite}
           onOpenListing={openListing}
