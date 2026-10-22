@@ -3341,23 +3341,27 @@ function ListingsPage({
   onToggleFavorite,
   onSelectProperty,
   onClearFilters,
+  featuredOnly = false,
+  onToggleFeaturedOnly,
 }) {
   const meta = LISTING_META[category];
 
   const [visibleCount, setVisibleCount] = useState(12);
   useEffect(() => {
     setVisibleCount(12);
-  }, [category]);
+  }, [category, featuredOnly]);
 
   return (
     <section className="mx-auto max-w-7xl px-4 md:px-8 pt-8 md:pt-12 pb-20">
       <p className="pk-mono text-xs uppercase tracking-wide mb-3 pk-breadcrumb">
         <button onClick={onBackHome} className="pk-primary-text font-semibold">Home</button>
-        <span className="pk-ink-soft"> / {meta.label}</span>
+        <span className="pk-ink-soft"> / {meta.label}{featuredOnly ? " · Featured" : ""}</span>
       </p>
-      <h1 className="pk-display text-3xl md:text-5xl font-semibold mb-2">{meta.title}</h1>
+      <h1 className="pk-display text-3xl md:text-5xl font-semibold mb-2">
+        {featuredOnly ? (category === "all" ? "Featured listings" : `Featured: ${meta.title.toLowerCase()}`) : meta.title}
+      </h1>
       <p className="pk-ink-soft">
-        {results.length} propert{results.length === 1 ? "y" : "ies"} found · Nakuru
+        {results.length} {featuredOnly ? "featured " : ""}propert{results.length === 1 ? "y" : "ies"} found · Nakuru
       </p>
 
       <div className="pk-chip-row mt-7">
@@ -3373,6 +3377,14 @@ function ListingsPage({
             </button>
           );
         })}
+        <button
+          type="button"
+          className={`pk-chip pk-chip-featured ${featuredOnly ? "pk-chip-active" : ""}`}
+          aria-pressed={featuredOnly}
+          onClick={onToggleFeaturedOnly}
+        >
+          <Star size={15} fill={featuredOnly ? "currentColor" : "none"} /> Featured only
+        </button>
       </div>
 
       <div className="pk-filter-card">
@@ -3402,13 +3414,22 @@ function ListingsPage({
       {results.length === 0 ? (
         <div className="pk-empty-state">
           <Search size={32} strokeWidth={1.5} className="pk-ink-soft mx-auto mb-4" />
-          <h3 className="pk-display text-xl font-semibold mb-2">No properties match yet</h3>
+          <h3 className="pk-display text-xl font-semibold mb-2">{featuredOnly ? "No featured properties match yet" : "No properties match yet"}</h3>
           <p className="pk-ink-soft text-sm max-w-sm mx-auto mb-5">
-            Try widening your budget or clearing a filter — new listings are added to Hao yangu realtors every day.
+            {featuredOnly
+              ? "Try widening your budget or clearing a filter, or look at all listings instead."
+              : "Try widening your budget or clearing a filter — new listings are added to Hao yangu realtors every day."}
           </p>
-          <button className="pk-btn-primary" style={{ margin: "0 auto" }} onClick={onClearFilters}>
-            Clear filters
-          </button>
+          <div className="flex flex-wrap gap-3 justify-center">
+            <button className="pk-btn-primary" onClick={onClearFilters}>
+              Clear filters
+            </button>
+            {featuredOnly && (
+              <button className="pk-btn-outline" onClick={onToggleFeaturedOnly}>
+                Show all listings
+              </button>
+            )}
+          </div>
         </div>
       ) : (
         <div className="pk-listing-grid">
@@ -5717,6 +5738,7 @@ export default function App() {
   const [selectedAgentId, setSelectedAgentId] = useState(null);
   const [activeTab, setActiveTab] = useState("buy");
   const [listingCategory, setListingCategory] = useState("buy");
+  const [featuredOnly, setFeaturedOnly] = useState(false);
   const [sortBy, setSortBy] = useState(SORT_OPTIONS[0]);
   const [scrollTarget, setScrollTarget] = useState(null);
   const [budget, setBudget] = useState(TAB_META.buy.budgetOptions[0]);
@@ -6205,7 +6227,19 @@ export default function App() {
     setSortBy(SORT_OPTIONS[0]);
   };
 
+  // "View all featured listings": the listings page with only featured (promoted) listings.
+  const goToFeatured = () => {
+    switchListingCategory("all");
+    setLocation("");
+    setFeaturedOnly(true);
+    logEvent("pageViews");
+    setPage("listings");
+    setScrollTarget("top");
+    setMenuOpen(false);
+  };
+
   const goToListings = (key, { resetFilters = true } = {}) => {
+    setFeaturedOnly(false);
     if (resetFilters) {
       switchListingCategory(key);
       setLocation("");
@@ -6224,6 +6258,7 @@ export default function App() {
   const handleClearFilters = () => {
     switchListingCategory(listingCategory);
     setLocation("");
+    setFeaturedOnly(false);
   };
 
   const goToAgents = () => {
@@ -6393,6 +6428,7 @@ export default function App() {
     if (bud && meta.budgetOptions.includes(bud)) setBudget(bud);
     const ord = sp.get("o");
     if (ord && SORT_OPTIONS.includes(ord)) setSortBy(ord);
+    setFeaturedOnly(sp.get("featured") === "1");
   };
   const applyPath = (path, search = "") => {
     if (staffLockedRef.current) {
@@ -6479,11 +6515,12 @@ export default function App() {
     if (meta.secondaryOptions.length && secondary !== meta.secondaryOptions[0]) sp.set("s", secondary);
     if (budget !== meta.budgetOptions[0]) sp.set("b", budget);
     if (sortBy !== SORT_OPTIONS[0]) sp.set("o", sortBy);
+    if (featuredOnly) sp.set("featured", "1");
     const qs = sp.toString();
     const want = qs ? `?${qs}` : "";
     if (window.location.search !== want) window.history.replaceState(null, "", window.location.pathname + want);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [routerReady, page, listingCategory, location, secondary, budget, sortBy]);
+  }, [routerReady, page, listingCategory, location, secondary, budget, sortBy, featuredOnly]);
 
   const handleTabChange = (key) => {
     setActiveTab(key);
@@ -6500,6 +6537,7 @@ export default function App() {
 
   const filteredProperties = useMemo(() => {
     let list = approvedListings.filter((p) => (listingCategory === "all" ? true : p.tag.toLowerCase() === listingCategory));
+    if (featuredOnly) list = list.filter(isFeatured);
 
     if (location.trim()) {
       const q = location.trim().toLowerCase();
@@ -6518,11 +6556,12 @@ export default function App() {
     else if (sortBy === "Price: High to Low") sorted.sort((a, b) => b.priceValue - a.priceValue);
     else sorted.sort((a, b) => Number(isFeatured(b)) - Number(isFeatured(a)) || b.id - a.id);
     return sorted;
-  }, [approvedListings, listingCategory, location, secondary, budget, sortBy]);
+  }, [approvedListings, listingCategory, location, secondary, budget, sortBy, featuredOnly]);
 
   // The "Featured listings" section on the home page shows featured (promoted) listings only, newest first.
-  // Ordinary listings are never used to fill it; they are all under "View all" and the category pages.
+  // Ordinary listings are never used to fill it; they have their own "Latest listings" section just below it.
   const homeFeatured = useMemo(() => approvedListings.filter(isFeatured).sort((a, b) => b.id - a.id).slice(0, 8), [approvedListings]);
+  const homeLatest = useMemo(() => approvedListings.filter((l) => !isFeatured(l)).sort((a, b) => b.id - a.id).slice(0, 8), [approvedListings]);
 
   // The home carousel shows promoted (featured) listings only: newest first, at most five.
   const heroFeatured = useMemo(() => approvedListings.filter(isFeatured).sort((a, b) => b.id - a.id).slice(0, 5), [approvedListings]);
@@ -7317,14 +7356,14 @@ import.meta.env.PROD ? (
       {/* ---------------- FEATURED PROPERTIES ---------------- */}
       {(approvedListings.length === 0 || homeFeatured.length > 0) && (
       <section ref={featuredRef} className="mx-auto max-w-7xl px-4 md:px-8 pb-8 md:pb-16">
-        <div className="flex items-end justify-between mb-3 md:mb-6 gap-4">
+        <div className="flex flex-wrap items-end justify-between mb-3 md:mb-6 gap-x-4 gap-y-3">
           <div>
             <p className="pk-mono text-xs pk-ink-soft uppercase tracking-wide mb-1">Promoted</p>
             <h2 className="pk-display text-xl md:text-3xl font-semibold">Featured listings</h2>
           </div>
-          {approvedListings.length > 0 && (
-            <button className="pk-btn-outline pk-btn-sm" onClick={() => goToListings("all")}>
-              View all <ArrowRight size={14} />
+          {homeFeatured.length > 0 && (
+            <button className="pk-view-all pk-view-all-featured" onClick={goToFeatured}>
+              <Star size={14} fill="currentColor" aria-hidden="true" /> View all featured listings <ArrowRight size={15} aria-hidden="true" />
             </button>
           )}
         </div>
@@ -7363,6 +7402,33 @@ import.meta.env.PROD ? (
           </>
         )}
       </section>
+      )}
+
+      {/* ---------------- LATEST (NOT FEATURED) LISTINGS ---------------- */}
+      {homeLatest.length > 0 && (
+        <section ref={homeFeatured.length === 0 ? featuredRef : undefined} className="mx-auto max-w-7xl px-4 md:px-8 pb-8 md:pb-16" aria-labelledby="pk-latest-heading">
+          <div className="flex flex-wrap items-end justify-between mb-3 md:mb-6 gap-x-4 gap-y-3">
+            <div>
+              <p className="pk-mono text-xs pk-ink-soft uppercase tracking-wide mb-1">More to explore</p>
+              <h2 id="pk-latest-heading" className="pk-display text-xl md:text-3xl font-semibold">Latest listings</h2>
+            </div>
+            <button className="pk-view-all" onClick={() => goToListings("all")}>
+              View all <ArrowRight size={15} aria-hidden="true" />
+            </button>
+          </div>
+          <div className="pk-scroller md:grid md:grid-cols-4 md:gap-6">
+            {homeLatest.map((p) => (
+              <PropertyCard
+                key={p.id}
+                property={p}
+                isFavorite={favorites.has(p.id)}
+                onToggleFavorite={toggleFavorite}
+                onSelect={openListing}
+                style={{ width: "min(62vw, 240px)" }}
+              />
+            ))}
+          </div>
+        </section>
       )}
 
       {/* ---------------- HOW IT WORKS ---------------- */}
@@ -7455,6 +7521,8 @@ import.meta.env.PROD ? (
           onToggleFavorite={toggleFavorite}
           onSelectProperty={openListing}
           onClearFilters={handleClearFilters}
+          featuredOnly={featuredOnly}
+          onToggleFeaturedOnly={() => setFeaturedOnly((v) => !v)}
         />
       )}
 

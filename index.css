@@ -1221,3 +1221,24 @@
         .pk-rating-overview { display: flex; flex-wrap: wrap; align-items: center; gap: 24px; padding: 16px 18px; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; }
         .pk-rating-big { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 96px; }
         .pk-rating-big strong { font-family: 'Fraunces', serif; font-size: 2.6rem; font-weight: 600; line-height: 1; }
+
+/* "View all" buttons on the home page */
+        .pk-view-all {
+          display: inline-flex; align-items: center; gap: 8px; padding: 10px 18px; border-radius: 999px;
+          border: 1.5px solid var(--primary); background: transparent; color: var(--primary);
+          font-weight: 700; font-size: 0.875rem; line-height: 1.2; cursor: pointer; white-space: nowrap;
+          transition: background .2s var(--ease), color .2s var(--ease), box-shadow .2s var(--ease), transform .2s var(--ease);
+        }
+        .pk-view-all svg:last-child { transition: transform .2s var(--ease); }
+        .pk-view-all:hover { background: var(--primary); color: var(--primary-ink); box-shadow: 0 6px 16px var(--shadow); }
+        .pk-view-all:hover svg:last-child { transform: translateX(3px); }
+        .pk-view-all:active { transform: scale(0.98); }
+        .pk-view-all:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+        .pk-view-all-featured {
+          border-color: var(--gold); color: var(--gold-ink);
+          background: linear-gradient(135deg, #F6C75A, var(--gold) 60%, #D98E22);
+          box-shadow: 0 4px 12px rgba(120, 70, 0, 0.25);
+        }
+        .pk-view-all-featured:hover { background: linear-gradient(135deg, #FAD577, #F0B64A 60%, #E39A2C); color: var(--gold-ink); box-shadow: 0 8px 20px rgba(120, 70, 0, 0.35); }
+        .pk-chip-featured.pk-chip-active { background: linear-gradient(135deg, #F6C75A, var(--gold) 60%, #D98E22); border-color: var(--gold); color: var(--gold-ink); }
+        @media (prefers-reduced-motion: reduce) { .pk-view-all, .pk-view-all svg:last-child { transition: none; } }
