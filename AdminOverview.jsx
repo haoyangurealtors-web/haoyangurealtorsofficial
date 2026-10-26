@@ -70,6 +70,18 @@ function Counter({ value }) {
   return <span>{fmt(useTween(value))}</span>;
 }
 
+/* Date ranges (visitor activity is recorded per day in Nakuru time) */
+const SITE_TIMEZONE = "Africa/Nairobi";
+const dayKey = (offsetDays = 0) =>
+  new Intl.DateTimeFormat("en-CA", { timeZone: SITE_TIMEZONE, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(Date.now() - offsetDays * 86400000));
+const RANGES = [
+  { key: "today", label: "Today", days: 1, text: "today" },
+  { key: "7d", label: "7 days", days: 7, text: "last 7 days" },
+  { key: "30d", label: "30 days", days: 30, text: "last 30 days" },
+  { key: "all", label: "All time", days: null, text: "all time" },
+];
+const prettyDay = (key) => new Date(`${key}T12:00:00`).toLocaleDateString("en-KE", { day: "numeric", month: "short", year: "numeric" });
+
 function timeAgo(ts, now) {
   if (!ts) return "waiting for data";
   const s = Math.max(0, Math.round((now - ts) / 1000));
@@ -131,13 +143,33 @@ function StatusPill({ status }) {
 /* Overview                                                            */
 /* ------------------------------------------------------------------ */
 
-export default function AdminOverview({ listings, agents, agencies, stats, lastUpdated, adminName, onNavigate, onUpdateListings, onToast }) {
+export default function AdminOverview({ listings, agents, agencies, stats, daily = null, lastUpdated, adminName, onNavigate, onUpdateListings, onToast }) {
   const now = useNow();
+  const [range, setRange] = useState("7d");
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
   const todayLabel = new Date().toLocaleDateString("en-KE", { weekday: "long", month: "long", day: "numeric" });
 
-  const s = stats || {};
+  // All time comes from the running totals; the other ranges add up the per-day records.
+  const perDay = Array.isArray(daily);
+  const activeRange = perDay ? range : "all";
+  const rangeInfo = RANGES.find((r) => r.key === activeRange) || RANGES[3];
+  const s = useMemo(() => {
+    if (activeRange === "all") return stats || {};
+    const from = dayKey(rangeInfo.days - 1);
+    const out = {};
+    daily.forEach((r) => {
+      if (r.day >= from) out[r.key] = (out[r.key] || 0) + r.count;
+    });
+    return out;
+  }, [activeRange, stats, daily, Math.floor(now / 60000)]); // eslint-disable-line react-hooks/exhaustive-deps
+  let rangeNote = "";
+  if (!perDay) rangeNote = "Date ranges switch on once supabase-usage-by-day.sql has been run.";
+  else if (activeRange !== "all") {
+    const earliest = daily.length ? daily.reduce((m, r) => (r.day < m ? r.day : m), daily[0].day) : null;
+    if (!earliest) rangeNote = "Recording by day has just started, so this fills in as visitors arrive. Earlier visits are in All time.";
+    else if (earliest > dayKey(rangeInfo.days - 1)) rangeNote = `Recorded by day since ${prettyDay(earliest)}. Earlier visits are in All time.`;
+  }
   const pageViews = s.pageViews || 0;
   const searches = s.searches || 0;
   const propertyViews = s.propertyDetailViews || 0;
@@ -166,7 +198,7 @@ export default function AdminOverview({ listings, agents, agencies, stats, lastU
       byCategory,
       recent: [...listings].sort((a, b) => b.id - a.id).slice(0, 6),
     };
-  }, [listings, agents, stats]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [listings, agents, s]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const chartData = data.byCategory.map((c) => ({ name: c.tag, views: c.views }));
 
@@ -217,6 +249,26 @@ export default function AdminOverview({ listings, agents, agencies, stats, lastU
         <button type="button" className="pk-btn-outline pk-ov-action" onClick={() => onNavigate("agents")}>
           <BadgeCheck size={15} /> Manage agents
         </button>
+      </div>
+
+      {/* Date range for the visitor numbers below */}
+      <div className="pk-ov-range-row">
+        <span className="pk-ov-range-label">Visitor activity</span>
+        <div className="pk-range" role="group" aria-label="Date range">
+          {RANGES.map((r) => (
+            <button
+              key={r.key}
+              type="button"
+              className={activeRange === r.key ? "pk-range-active" : ""}
+              aria-pressed={activeRange === r.key}
+              disabled={!perDay && r.key !== "all"}
+              onClick={() => setRange(r.key)}
+            >
+              {r.label}
+            </button>
+          ))}
+        </div>
+        {rangeNote && <span className="pk-ov-range-note">{rangeNote}</span>}
       </div>
 
       {/* KPIs */}
@@ -302,7 +354,7 @@ export default function AdminOverview({ listings, agents, agencies, stats, lastU
           )}
         </Card>
 
-        <Card title="Visitor engagement" hint="Per 100 page views, what visitors go on to do">
+        <Card title="Visitor engagement" hint={`Per 100 page views, what visitors go on to do · ${rangeInfo.text}`}>
           <ul className="pk-ov-funnel">
             {funnel.map((f) => {
               const Icon = f.icon;

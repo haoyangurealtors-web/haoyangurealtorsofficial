@@ -250,6 +250,7 @@ const STORAGE_KEYS = {
   stats: "hy-realtors:usage-stats",
   favorites: "hy-realtors:favorites",
   ratings: "hy-realtors:agent-ratings",
+  statsDaily: "hy-realtors:stats-daily",
   raterId: "hy-realtors:rater-id",
 };
 
@@ -551,6 +552,11 @@ function listingToRow(l) {
     submitted_by: l.submittedBy || "",
   };
 }
+// Visitor activity is counted per day in Nakuru time, so "Today" starts at midnight there.
+const SITE_TIMEZONE = "Africa/Nairobi";
+const siteDayKey = (offsetDays = 0) =>
+  new Intl.DateTimeFormat("en-CA", { timeZone: SITE_TIMEZONE, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(Date.now() - offsetDays * 86400000));
+
 // True once the database has the agents.phone column (see supabase-agent-ratings-and-phone.sql). Until then the
 // phone is simply left out of what we save, so the site keeps working before that file has been run.
 let agentPhoneColumnReady = false;
@@ -5579,6 +5585,7 @@ function AdminConsole({ theme, setTheme, onExit, adminName, listings, onUpdateLi
   const [tab, setTab] = useState("overview");
   const [tabIntent, setTabIntent] = useState(null);
   const [stats, setStats] = useState(null);
+  const [daily, setDaily] = useState(null); // null = per-day tracking isn't available yet
   const [lastUpdated, setLastUpdated] = useState(null);
   const [toasts, setToasts] = useState([]);
   const toastIdRef = useRef(0);
@@ -5600,15 +5607,25 @@ function AdminConsole({ theme, setTheme, onExit, adminName, listings, onUpdateLi
           const session = await getValidSession();
           if (!session) return;
           const rows = await sbRequest("/rest/v1/usage_events?select=key,count", { token: session.access_token });
+          let dayRows = null;
+          try {
+            dayRows = await sbRequest(`/rest/v1/usage_daily?select=day,key,count&day=gte.${siteDayKey(45)}&limit=5000`, { token: session.access_token });
+          } catch (e) {
+            dayRows = null; // supabase-usage-by-day.sql hasn't been run yet
+          }
           if (!cancelled) {
             setStats(Object.fromEntries((rows || []).map((r) => [r.key, Number(r.count)])));
+            setDaily(Array.isArray(dayRows) ? dayRows.map((r) => ({ day: String(r.day).slice(0, 10), key: r.key, count: Number(r.count) || 0 })) : null);
             setLastUpdated(Date.now());
           }
           return;
         }
         const res = await window.storage.get(STORAGE_KEYS.stats, true);
+        const dayRes = await window.storage.get(STORAGE_KEYS.statsDaily, true).catch(() => null);
         if (!cancelled && res && res.value) {
           setStats(JSON.parse(res.value));
+          const byDay = dayRes && dayRes.value ? JSON.parse(dayRes.value) : {};
+          setDaily(Object.entries(byDay).flatMap(([day, keys]) => Object.entries(keys).map(([key, count]) => ({ day, key, count: Number(count) || 0 }))));
           setLastUpdated(Date.now());
         }
       } catch (e) {
@@ -5692,6 +5709,7 @@ function AdminConsole({ theme, setTheme, onExit, adminName, listings, onUpdateLi
                 agents={agents}
                 agencies={agencies}
                 stats={stats}
+                daily={daily}
                 lastUpdated={lastUpdated}
                 adminName={adminName}
                 onNavigate={navigate}
@@ -6139,11 +6157,19 @@ export default function App() {
     statsFlushScheduled.current = false;
     if (REMOTE) {
       if (!Object.keys(pending).length) return;
+      let token;
       try {
         const session = await getValidSession();
-        await sbRequest("/rest/v1/rpc/log_events", { method: "POST", token: session ? session.access_token : undefined, body: { deltas: pending } });
+        token = session ? session.access_token : undefined;
+        await sbRequest("/rest/v1/rpc/log_events", { method: "POST", token, body: { deltas: pending } });
       } catch (e) {
         /* stats are best-effort only */
+      }
+      // The same batch, recorded by day (needs supabase-usage-by-day.sql; harmless if it hasn't been run).
+      try {
+        await sbRequest("/rest/v1/rpc/log_events_daily", { method: "POST", token, body: { deltas: pending } });
+      } catch (e) {
+        /* date ranges simply stay empty until the database file is run */
       }
       return;
     }
@@ -6155,6 +6181,14 @@ export default function App() {
         merged[key] = (merged[key] || 0) + amount;
       });
       await window.storage.set(STORAGE_KEYS.stats, JSON.stringify(merged), true);
+      const dayRes = await window.storage.get(STORAGE_KEYS.statsDaily, true).catch(() => null);
+      const days = dayRes && dayRes.value ? JSON.parse(dayRes.value) : {};
+      const today = siteDayKey(0);
+      days[today] = { ...(days[today] || {}) };
+      Object.entries(pending).forEach(([key, amount]) => {
+        days[today][key] = (days[today][key] || 0) + amount;
+      });
+      await window.storage.set(STORAGE_KEYS.statsDaily, JSON.stringify(days), true);
     } catch (e) {
       /* stats are best-effort only */
     }

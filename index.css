@@ -1242,3 +1242,14 @@
         .pk-view-all-featured:hover { background: linear-gradient(135deg, #FAD577, #F0B64A 60%, #E39A2C); color: var(--gold-ink); box-shadow: 0 8px 20px rgba(120, 70, 0, 0.35); }
         .pk-chip-featured.pk-chip-active { background: linear-gradient(135deg, #F6C75A, var(--gold) 60%, #D98E22); border-color: var(--gold); color: var(--gold-ink); }
         @media (prefers-reduced-motion: reduce) { .pk-view-all, .pk-view-all svg:last-child { transition: none; } }
+
+/* Overview date range */
+.pk-ov-range-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 14px; margin: 2px 0 14px; }
+.pk-ov-range-label { font-size: 0.78rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-soft); }
+.pk-range { display: inline-flex; padding: 3px; gap: 2px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border); }
+.pk-range button { padding: 6px 14px; border: 0; border-radius: 999px; background: transparent; color: var(--ink-soft); font-size: 0.8rem; font-weight: 700; cursor: pointer; transition: background .2s var(--ease), color .2s var(--ease); }
+.pk-range button:hover:not(:disabled):not(.pk-range-active) { color: var(--ink); }
+.pk-range button.pk-range-active { background: var(--primary); color: var(--primary-ink); }
+.pk-range button:disabled { opacity: .45; cursor: not-allowed; }
+.pk-range button:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.pk-ov-range-note { font-size: 0.78rem; color: var(--ink-soft); }
