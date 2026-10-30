@@ -1253,3 +1253,9 @@
 .pk-range button:disabled { opacity: .45; cursor: not-allowed; }
 .pk-range button:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
 .pk-ov-range-note { font-size: 0.78rem; color: var(--ink-soft); }
+
+/* Rental deposit */
+.pk-deposit-field { margin: 0; min-width: 0; border: 1.5px solid var(--border); border-radius: 14px; padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 12px; }
+.pk-deposit-field legend { padding: 0 6px; font-size: 0.82rem; font-weight: 700; color: var(--ink); }
+.pk-deposit-line { margin: -4px 0 14px; padding: 8px 12px; border-radius: 10px; font-size: 0.9rem; font-weight: 700; background: var(--surface-2); color: var(--ink); }
+.pk-deposit-line.pk-deposit-unknown { font-weight: 600; color: var(--ink-soft); }

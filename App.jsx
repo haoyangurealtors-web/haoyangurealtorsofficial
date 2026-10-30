@@ -11,6 +11,7 @@ import {
   Bed,
   Bath,
   Ruler,
+  Wallet,
   Heart,
   ChevronRight,
   ChevronLeft,
@@ -500,7 +501,11 @@ const favoritesApi = {
 // ---------- Shared data: listings, agents, staff and photos on Supabase ----------
 const REMOTE = AUTH_ENABLED;
 
+// True once the database has the deposit columns (see supabase-rental-deposit.sql). Until then deposits are simply
+// left out of what we save, so the site keeps working before that file has been run.
+let listingDepositColumnReady = false;
 function listingFromRow(r) {
+  if ("deposit_required" in r) listingDepositColumnReady = true;
   const priceValue = Number(r.price_value) || 0;
   return {
     id: Number(r.id),
@@ -518,6 +523,8 @@ function listingFromRow(r) {
     img: r.img,
     featured: Boolean(r.featured),
     featuredUntil: r.featured_until || null,
+    depositRequired: r.deposit_required === null || r.deposit_required === undefined ? null : Boolean(r.deposit_required),
+    depositAmount: r.deposit_amount === null || r.deposit_amount === undefined ? null : Number(r.deposit_amount),
     detailsLoaded: "contact" in r,
     description: r.description || "",
     amenities: Array.isArray(r.amenities) ? r.amenities : [],
@@ -543,6 +550,11 @@ function listingToRow(l) {
     img: l.img,
     featured: Boolean(l.featured),
     featured_until: l.featuredUntil || null,
+    ...(l.depositRequired === null || l.depositRequired === undefined
+      ? listingDepositColumnReady
+        ? { deposit_required: null, deposit_amount: null }
+        : {}
+      : { deposit_required: l.depositRequired, deposit_amount: l.depositRequired ? l.depositAmount : null }),
     description: l.description || "",
     amenities: l.amenities || [],
     contact: l.contact || {},
@@ -1946,6 +1958,8 @@ function PropertyDetailPage({
   if (property.baths != null) facts.push({ icon: Bath, label: "Bathrooms", value: property.baths });
   if (property.size && property.size !== "—") facts.push({ icon: Ruler, label: property.tag === "Land" ? "Plot size" : "Size", value: property.size });
   if (property.spaceType) facts.push({ icon: Building2, label: "Space type", value: property.spaceType });
+  const deposit = depositInfo(property);
+  if (deposit) facts.push({ icon: Wallet, label: "Deposit", value: deposit.value });
 
   return (
     <section className="mx-auto max-w-7xl px-4 md:px-8 pt-5 md:pt-10 pb-28 lg:pb-20">
@@ -1984,6 +1998,11 @@ function PropertyDetailPage({
               <span className="text-sm pk-ink-soft font-normal">{property.period}</span>
             </span>
             <span className="pk-chip-tag">{TAG_LABELS[property.tag] || property.tag}</span>
+            {deposit && (
+              <span className={`pk-chip-tag pk-deposit-chip pk-deposit-${deposit.state} inline-flex items-center gap-1 lg:hidden`}>
+                <Wallet size={11} aria-hidden="true" /> {deposit.state === "yes" ? `Deposit ${deposit.value}` : deposit.value}
+              </span>
+            )}
             {isFeatured(property) && (
               <span className="pk-chip-tag pk-chip-tag-featured">
                 <Star size={11} fill="currentColor" aria-hidden="true" /> Featured
@@ -2015,6 +2034,11 @@ function PropertyDetailPage({
               {property.price}
               <span className="text-sm pk-ink-soft font-normal">{property.period}</span>
             </div>
+            {deposit && (
+              <p className={`pk-deposit-line pk-deposit-${deposit.state} hidden lg:flex items-center gap-2`}>
+                <Wallet size={15} aria-hidden="true" /> {deposit.state === "yes" ? `Deposit: ${deposit.value}` : deposit.value === "Ask the agent" ? "Deposit: ask the agent" : deposit.value}
+              </p>
+            )}
 
             <p className="pk-contact-kicker">Listed by</p>
             <div className="pk-contact-person">
@@ -3878,6 +3902,15 @@ function StaffGate({ agencies, onAuthenticate, onExit }) {
   );
 }
 
+// How a rental's deposit reads to people. Only rentals have one; null for everything else.
+const formatKsh = (n) => `KSh ${Number(n).toLocaleString("en-KE")}`;
+function depositInfo(l) {
+  if (!l || l.tag !== "Rent") return null;
+  if (l.depositRequired === true) return { state: "yes", value: formatKsh(l.depositAmount || 0), short: `Deposit ${formatKsh(l.depositAmount || 0)}` };
+  if (l.depositRequired === false) return { state: "no", value: "No deposit required", short: "No deposit" };
+  return { state: "unknown", value: "Ask the agent", short: "Deposit not stated" };
+}
+
 const EMPTY_LISTING_FORM = {
   title: "",
   tag: "Buy",
@@ -3889,6 +3922,8 @@ const EMPTY_LISTING_FORM = {
   size: "",
   spaceType: "Office",
   acres: "",
+  depositRequired: "", // rentals only: "yes" or "no" (must be chosen)
+  depositAmount: "",
   img: "",
   description: "",
   selectedAmenities: [],
@@ -3934,6 +3969,8 @@ function buildListingFromForm(form, nextId) {
     size: form.tag === "Land" ? `${form.acres || 0} acre${Number(form.acres) === 1 ? "" : "s"}` : form.size.trim() || "—",
     acres: form.tag === "Land" ? Number(form.acres) || 0 : undefined,
     spaceType: form.tag === "Commercial" ? form.spaceType : undefined,
+    depositRequired: form.tag === "Rent" && form.depositRequired ? form.depositRequired === "yes" : null,
+    depositAmount: form.tag === "Rent" && form.depositRequired === "yes" ? Math.round(Number(form.depositAmount)) || 0 : null,
     img: form.img.trim(),
     featured: false,
     description: form.description.trim() || "No description provided yet.",
@@ -3964,6 +4001,8 @@ function formFromListing(l) {
     size: l.tag === "Land" || l.size === "—" ? "" : text(l.size),
     spaceType: l.spaceType || "Office",
     acres: text(l.acres),
+    depositRequired: l.tag === "Rent" && l.depositRequired === true ? "yes" : l.tag === "Rent" && l.depositRequired === false ? "no" : "",
+    depositAmount: l.depositRequired === true && l.depositAmount ? String(l.depositAmount) : "",
     img: l.img || "",
     description: l.description === "No description provided yet." ? "" : l.description || "",
     selectedAmenities: amenities.filter((a) => presets.includes(a)),
@@ -4000,6 +4039,7 @@ function ListingForm({ onSubmit, submitLabel = "Publish listing", initial = null
   const [form, setForm] = useState(() => (initial ? formFromListing(initial) : EMPTY_LISTING_FORM));
   const [formError, setFormError] = useState("");
   const [photoBusy, setPhotoBusy] = useState(false);
+  const depositRef = useRef(null);
 
   const handleCategoryChange = (tag) => {
     setForm((f) => ({ ...f, tag, period: DEFAULT_PERIOD_BY_TAG[tag], selectedAmenities: [] }));
@@ -4032,6 +4072,20 @@ function ListingForm({ onSubmit, submitLabel = "Publish listing", initial = null
   const handleSubmit = (e) => {
     e.preventDefault();
     if (!form.title.trim() || !form.location.trim() || !form.priceValue) return;
+    if (form.tag === "Rent") {
+      const needsChoice = !form.depositRequired;
+      const amount = Number(form.depositAmount);
+      const badAmount = form.depositRequired === "yes" && !(Number.isFinite(amount) && amount >= 1);
+      if (needsChoice || badAmount) {
+        setFormError(needsChoice ? "Please say whether this rental requires a deposit." : "Enter the deposit amount in KSh, for example 70000.");
+        const target = depositRef.current && depositRef.current.querySelector(needsChoice ? "button" : "input");
+        if (target) {
+          target.scrollIntoView({ block: "center", behavior: "smooth" });
+          target.focus({ preventScroll: true });
+        }
+        return;
+      }
+    }
     if (!form.img.trim()) {
       setFormError("Please add a photo of the property.");
       return;
@@ -4084,6 +4138,49 @@ function ListingForm({ onSubmit, submitLabel = "Publish listing", initial = null
           options={Object.values(BILLING_LABELS)}
           onChange={(label) => setForm({ ...form, period: BILLING_VALUE_BY_LABEL[label] })}
         />
+        {form.tag === "Rent" && (
+          <fieldset className="pk-admin-form-full pk-deposit-field" ref={depositRef}>
+            <legend>
+              Does this rental require a deposit? <span aria-hidden="true">*</span>
+            </legend>
+            <div className="pk-chip-row" role="radiogroup" aria-label="Deposit required" aria-required="true" style={{ flexWrap: "wrap", overflow: "visible" }}>
+              {[
+                ["yes", "Yes, a deposit is required"],
+                ["no", "No deposit required"],
+              ].map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  role="radio"
+                  aria-checked={form.depositRequired === value}
+                  className={`pk-chip ${form.depositRequired === value ? "pk-chip-active" : ""}`}
+                  onClick={() => {
+                    setForm({ ...form, depositRequired: value, depositAmount: value === "yes" ? form.depositAmount : "" });
+                    setFormError("");
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {form.depositRequired === "yes" && (
+              <label>
+                Deposit amount (KSh)
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  inputMode="numeric"
+                  value={form.depositAmount}
+                  onChange={(e) => setForm({ ...form, depositAmount: e.target.value })}
+                  placeholder="e.g. 70000"
+                  required
+                />
+                <span className="pk-ink-soft text-xs">The total a tenant pays as a deposit before moving in, for example two months' rent.</span>
+              </label>
+            )}
+          </fieldset>
+        )}
         {(form.tag === "Buy" || form.tag === "Rent") && (
           <>
             <label>
@@ -4376,6 +4473,7 @@ function AdminListingsPanel({ listings, onUpdateListings, onToast, adminName, op
                 <p className="pk-ink-soft text-xs mt-1">
                   {l.location} · {l.price}
                   {l.period} · {l.tag}
+                  {depositInfo(l) ? ` · ${depositInfo(l).short}` : ""}
                 </p>
                 <p className="pk-ink-soft text-xs">
                   Submitted by {l.submittedBy || "—"}
@@ -5275,6 +5373,7 @@ function AgencyListingsPanel({ role = "agency", agency, userName, listings, allL
                 <p className="pk-ink-soft text-xs mt-1">
                   {l.location} · {l.price}
                   {l.period} · {l.tag}
+                  {depositInfo(l) ? ` · ${depositInfo(l).short}` : ""}
                 </p>
                 {!isAgent && <p className="pk-ink-soft text-xs">Posted by {l.submittedBy || "—"}</p>}
               </div>
