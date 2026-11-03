@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from "react";
+import React, { useState, useEffect, useRef, useMemo, lazy, Suspense } from "react";
 import LOGO_IMAGE_SRC from "./logo.webp";
 import LOGO_IMAGE_SRC_DARK from "./logo-dark.webp";
 import {
@@ -54,6 +54,24 @@ import {
   MessageCircle,
 } from "lucide-react";
 import AdminOverview from "./AdminOverview.jsx";
+import PasswordMeter from "./PasswordMeter.jsx";
+import {
+  PASSWORD_MIN,
+  EMAIL_MAX,
+  NAME_MAX,
+  validateEmail,
+  suggestEmailFix,
+  validateName,
+  checkPassword,
+  throttleSecondsLeft,
+  recordFailure,
+  clearThrottle,
+} from "./authRules.js";
+
+// The 3D house in the log-in window loads separately, only once someone opens that window.
+const AuthHouse3D = lazy(() => import("./AuthHouse3D.jsx"));
+const LOGIN_THROTTLE_KEY = "hy-realtors:login-cooldown";
+const STAFF_THROTTLE_KEY = "hy-realtors:staff-cooldown";
 
 // Brand glyphs that the icon library doesn't include.
 function XIcon({ size = 16 }) {
@@ -352,6 +370,7 @@ async function sbRequest(path, { method = "GET", body, token, headers = {} } = {
     const err = new Error((data && (data.error_description || data.msg || data.message)) || "Request failed");
     err.status = res.status;
     err.code = data && (data.error_code || data.code || data.error);
+    err.reasons = (data && data.weak_password && data.weak_password.reasons) || [];
     throw err;
   }
   return data;
@@ -904,7 +923,13 @@ function friendlyAuthError(err, tab) {
   if (err && err.status === 429) return "Too many attempts. Please wait a minute and try again.";
   if (code === "captcha_failed") return "The security check didn't pass. Please try again.";
   if (code === "mfa_verification_failed" || code === "mfa_challenge_expired" || code === "mfa_verification_rejected") return "That code didn't work. Use the newest code from your authenticator app.";
-  if (code === "weak_password") return "That password is too weak. Try a longer one with letters and numbers.";
+  if (code === "weak_password") {
+    const reasons = (err && err.reasons) || [];
+    if (reasons.includes("pwned")) return "That password has appeared in a known data breach. Please choose a different one.";
+    return `That password was rejected as too weak. Use at least ${PASSWORD_MIN} characters with a letter and a number.`;
+  }
+  if (code === "same_password") return "Choose a password you haven't used before.";
+  if (code === "email_address_invalid") return "That email address isn't accepted. Check it and try again.";
   if (code === "user_already_exists" || code === "email_exists") return "That email already has an account. Try logging in instead.";
   if (tab === "login" && err && err.status === 400) return "Incorrect email or password.";
   if (tab === "recovery" && err && (err.status === 401 || err.status === 403)) return "That reset link has expired. Request a new one.";
@@ -3696,15 +3721,32 @@ function RemoteStaffGate({ account, staffState, onLogin, onVerifyCode, onMfaDone
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (busy) return;
+    if (!password) {
+      setError("Enter your password.");
+      return;
+    }
     if (TURNSTILE_SITE_KEY && !captchaToken) {
       setError("Please complete the security check.");
+      return;
+    }
+    const wait = throttleSecondsLeft(STAFF_THROTTLE_KEY);
+    if (wait > 0) {
+      setError(`Too many wrong passwords. Please wait ${wait} seconds and try again.`);
       return;
     }
     setBusy(true);
     setError("");
     try {
       await onLogin(email.trim().toLowerCase(), password, captchaToken);
+      clearThrottle(STAFF_THROTTLE_KEY);
     } catch (err) {
+      if (err && err.status === 400) {
+        const locked = recordFailure(STAFF_THROTTLE_KEY);
+        if (locked > 0) {
+          setError(`Too many wrong passwords. Please wait ${locked} seconds and try again.`);
+          return;
+        }
+      }
       setError(friendlyAuthError(err, "login"));
     } finally {
       setBusy(false);
@@ -3776,7 +3818,7 @@ function RemoteStaffGate({ account, staffState, onLogin, onVerifyCode, onMfaDone
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
         <label>
           Email
-          <input type="email" required autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@email.com" />
+          <input type="email" required inputMode="email" autoCapitalize="none" autoCorrect="off" spellCheck={false} maxLength={EMAIL_MAX} autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@email.com" />
         </label>
         <label>
           Password
@@ -5879,6 +5921,8 @@ export default function App() {
   const [showPw, setShowPw] = useState(false);
   const [authAgree, setAuthAgree] = useState(false);
   const [authIntro, setAuthIntro] = useState("");
+  const [emailTouched, setEmailTouched] = useState(false);
+  const [authEverOpened, setAuthEverOpened] = useState(false);
   const [authChecked, setAuthChecked] = useState(!AUTH_ENABLED);
   const gateAutoFor = useRef(null);
   const recoveryTokenRef = useRef(null);
@@ -5887,6 +5931,16 @@ export default function App() {
   const firstPageRender = useRef(true);
   useDialogFocus(authOpen, authDialogRef);
   useDialogFocus(menuOpen, drawerRef);
+  // The 3D house is only fetched the first time the log-in window opens.
+  useEffect(() => {
+    if (authOpen) setAuthEverOpened(true);
+  }, [authOpen]);
+  // Live feedback under the password box (sign-up and reset forms only).
+  const pwResult = useMemo(
+    () => checkPassword(authForm.password, { email: authForm.email, name: authForm.name }),
+    [authForm.password, authForm.email, authForm.name]
+  );
+  const emailFix = emailTouched && authTab !== "recovery" ? suggestEmailFix(authForm.email) : null;
   // No seed data — listings are added only by the superadmin, agencies and agents via their dashboards.
   const [listings, setListings] = useState([]);
   const [agents, setAgents] = useState(AGENTS);
@@ -6767,6 +6821,7 @@ export default function App() {
     setAuthNotice("");
     setShowPw(false);
     setAuthAgree(false);
+    setEmailTouched(false);
     setAuthForm((f) => ({ ...f, password: "", confirm: "", website: "" }));
     setAuthOpen(true);
     setMenuOpen(false);
@@ -6953,47 +7008,58 @@ export default function App() {
     setMfaTick((t) => t + 1);
   };
 
+  // Shows one problem and puts the cursor in the box that needs fixing.
+  const failAuth = (message, fieldId) => {
+    setAuthError(message);
+    if (fieldId) {
+      setTimeout(() => {
+        const el = document.getElementById(fieldId);
+        if (el) el.focus();
+      }, 0);
+    }
+  };
+
   const handleAuthSubmit = async (e) => {
     e.preventDefault();
     if (authBusy) return;
-    const email = authForm.email.trim().toLowerCase();
-    const { password, confirm, name, website } = authForm;
+    const { password, confirm, website } = authForm;
     setAuthError("");
     setAuthNotice("");
     if (website) return; // hidden field only bots fill in
-    if (authTab !== "recovery" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      setAuthError("Enter a valid email address.");
-      return;
+    setEmailTouched(true);
+
+    let name = "";
+    if (authTab === "signup") {
+      const nameCheck = validateName(authForm.name);
+      if (!nameCheck.ok) return failAuth(nameCheck.message, "pk-auth-name");
+      name = nameCheck.name;
     }
-    if (authTab === "signup" && !name.trim()) {
-      setAuthError("Please enter your name.");
-      return;
+    const emailCheck = validateEmail(authForm.email);
+    const email = emailCheck.email;
+    if (authTab !== "recovery" && !emailCheck.ok) return failAuth(emailCheck.message, "pk-auth-email");
+    if (authTab === "login" && !password) return failAuth("Enter your password.", "pk-auth-password");
+    if (authTab === "signup" || authTab === "recovery") {
+      if (!pwResult.ok) return failAuth(pwResult.problem, "pk-auth-password");
+      if (password !== confirm) return failAuth("The two passwords don't match.", "pk-auth-confirm");
     }
     if (authTab === "signup" && !authAgree) {
-      setAuthError("Please tick the box to agree to the Terms of Use and Privacy Policy.");
-      return;
-    }
-    if (authTab === "signup" || authTab === "recovery") {
-      if (!(password.length >= 8 && /[A-Za-z]/.test(password) && /[0-9]/.test(password))) {
-        setAuthError("Use at least 8 characters, with letters and a number.");
-        return;
-      }
-      if (password !== confirm) {
-        setAuthError("The two passwords don't match.");
-        return;
-      }
+      return failAuth("Please tick the box to agree to the Terms of Use and Privacy Policy.");
     }
     if (TURNSTILE_SITE_KEY && authTab !== "recovery" && !captchaToken) {
-      setAuthError("Please complete the security check.");
-      return;
+      return failAuth("Please complete the security check.");
+    }
+    if (authTab === "login") {
+      const wait = throttleSecondsLeft(LOGIN_THROTTLE_KEY);
+      if (wait > 0) return failAuth(`Too many wrong passwords. Please wait ${wait} seconds and try again, or reset your password.`);
     }
     setAuthBusy(true);
     try {
       if (authTab === "login") {
         establishSession(await authApi.signIn(email, password, captchaToken));
+        clearThrottle(LOGIN_THROTTLE_KEY);
         setAuthOpen(false);
       } else if (authTab === "signup") {
-        const result = await authApi.signUp(email, password, name.trim(), captchaToken);
+        const result = await authApi.signUp(email, password, name, captchaToken);
         if (result.session) {
           establishSession(result.session);
           setAuthOpen(false);
@@ -7013,6 +7079,13 @@ export default function App() {
         setAuthNotice("Password updated. You can now log in.");
       }
     } catch (err) {
+      if (authTab === "login" && err && err.status === 400) {
+        const locked = recordFailure(LOGIN_THROTTLE_KEY);
+        if (locked > 0) {
+          setAuthError(`Too many wrong passwords. Please wait ${locked} seconds and try again, or reset your password.`);
+          return;
+        }
+      }
       setAuthError(friendlyAuthError(err, authTab));
     } finally {
       setAuthBusy(false);
@@ -7899,6 +7972,11 @@ import.meta.env.PROD ? (
       {AUTH_ENABLED && (
         <div className={`pk-modal-backdrop ${authOpen ? "pk-open" : ""}`} onClick={closeAuth} inert={authOpen ? undefined : ""}>
           <div className="pk-modal" ref={authDialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="pk-auth-title" onClick={(e) => e.stopPropagation()}>
+            {authEverOpened && (
+              <Suspense fallback={<div className="pk-auth-3d" aria-hidden="true" />}>
+                <AuthHouse3D active={authOpen} />
+              </Suspense>
+            )}
             <div className="flex items-center justify-between mb-5">
               <span id="pk-auth-title" className="pk-display text-lg font-semibold">
                 {authTab === "forgot" ? "Reset your password" : authTab === "recovery" ? "Choose a new password" : `Welcome to ${SITE_CONFIG.name}`}
@@ -7929,13 +8007,35 @@ import.meta.env.PROD ? (
               {authTab === "signup" && (
                 <label className="text-sm font-medium">
                   Full name
-                  <input type="text" autoComplete="name" placeholder="Your full name" value={authForm.name} onChange={(e) => setAuthForm({ ...authForm, name: e.target.value })} />
+                  <input id="pk-auth-name" type="text" autoComplete="name" maxLength={NAME_MAX} placeholder="Your full name" value={authForm.name} onChange={(e) => setAuthForm({ ...authForm, name: e.target.value })} />
                 </label>
               )}
               {authTab !== "recovery" && (
                 <label className="text-sm font-medium">
                   Email
-                  <input type="email" autoComplete="email" placeholder="you@email.com" value={authForm.email} onChange={(e) => setAuthForm({ ...authForm, email: e.target.value })} />
+                  <input
+                    id="pk-auth-email"
+                    type="email"
+                    inputMode="email"
+                    autoComplete={authTab === "login" ? "username" : "email"}
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    maxLength={EMAIL_MAX}
+                    placeholder="you@email.com"
+                    value={authForm.email}
+                    onChange={(e) => setAuthForm({ ...authForm, email: e.target.value })}
+                    onBlur={() => setEmailTouched(true)}
+                  />
+                  {emailFix && (
+                    <span className="pk-email-fix" role="status">
+                      Did you mean{" "}
+                      <button type="button" className="pk-primary-text font-semibold underline" onClick={() => setAuthForm({ ...authForm, email: emailFix })}>
+                        {emailFix}
+                      </button>
+                      ?
+                    </span>
+                  )}
                 </label>
               )}
               {authTab !== "forgot" && (
@@ -7943,8 +8043,10 @@ import.meta.env.PROD ? (
                   {authTab === "recovery" ? "New password" : "Password"}
                   <div className="pk-input-wrap">
                     <input
+                      id="pk-auth-password"
                       type={showPw ? "text" : "password"}
                       autoComplete={authTab === "login" ? "current-password" : "new-password"}
+                      aria-describedby={authTab === "signup" || authTab === "recovery" ? "pk-pw-rules" : undefined}
                       placeholder="••••••••"
                       value={authForm.password}
                       onChange={(e) => setAuthForm({ ...authForm, password: e.target.value })}
@@ -7964,9 +8066,14 @@ import.meta.env.PROD ? (
                 <>
                   <label className="text-sm font-medium">
                     Confirm password
-                    <input type={showPw ? "text" : "password"} autoComplete="new-password" placeholder="••••••••" value={authForm.confirm} onChange={(e) => setAuthForm({ ...authForm, confirm: e.target.value })} />
+                    <input id="pk-auth-confirm" type={showPw ? "text" : "password"} autoComplete="new-password" placeholder="••••••••" value={authForm.confirm} onChange={(e) => setAuthForm({ ...authForm, confirm: e.target.value })} />
                   </label>
-                  <p className="pk-ink-soft text-xs">At least 8 characters, with letters and a number.</p>
+                  {authForm.confirm && (
+                    <p className="pk-match text-xs" data-ok={authForm.confirm === authForm.password ? "true" : "false"} role="status">
+                      {authForm.confirm === authForm.password ? "Passwords match." : "Passwords don't match yet."}
+                    </p>
+                  )}
+                  <PasswordMeter id="pk-pw-rules" result={pwResult} />
                 </>
               )}
               {authTab === "signup" && (

@@ -38,10 +38,35 @@ Who can do what
 - Listings from agencies and agents always start as "Pending" until the superadmin approves them; editing never changes that.
 - After signing in or signing up, superadmins, agencies and agents go straight to their own dashboard and see only that: the public site is not shown to them. The button in the top corner of their dashboard is "Log out". Everyone else (visitors and ordinary customers) sees the normal site.
 
+## Sign-up and login security
+What the site itself checks (in authRules.js, used by Create account, Reset password and Log in):
+- Email: trimmed and lower-cased, must be a properly formed address (no spaces, one @, a real-looking domain, 254 characters at most). Obvious typos such as gmail.con get a "Did you mean...?" suggestion that never blocks anyone.
+- Password (Create account and Reset password): at least 10 characters, at most 72, at least one letter and one number, not a very common or predictable password (password123, qwerty..., 1234567890, Nairobi2024, repeated patterns), and not built from the person's own name or email. A live checklist and strength bar show this as they type. To change the minimum, edit PASSWORD_MIN at the top of authRules.js.
+- Name: 2 to 60 characters, must include a letter.
+- Log in: the same wrong message for a wrong email or a wrong password (so nobody can tell which accounts exist), and the same neutral message after "Forgot your password". After 5 wrong passwords in a row the form pauses for 60 seconds (visitor Log in and Staff sign in).
+- Bots: a hidden trap field, plus the Cloudflare security check (see below).
+- Staff: Staff sign in asks for a code from an authenticator app (two-step login) whenever the database says the role requires it, and for any staff member who has set it up. Agents are not forced to use it; agencies and the superadmin are set up by supabase-setup.sql, so check that file if you want to be sure. The database only treats someone as staff once their email is confirmed.
+
+The browser can only guide people. Anyone can bypass a web page and talk to the sign-up service directly, so these settings must ALSO be switched on in the dashboards. Do this once:
+1. Supabase > Authentication > Providers > Email:
+   - Confirm email: ON. (Staff access and the account wall depend on confirmed emails.)
+   - Minimum password length: 10 (the same as PASSWORD_MIN).
+   - Password requirements: Letters and digits.
+   - Secure password change: ON.
+2. Supabase > Authentication > Attack Protection:
+   - Prevent use of leaked passwords: ON (only offered on the Pro plan; the site already shows a clear message when it is rejected).
+   - CAPTCHA protection: ON, choose Cloudflare Turnstile and paste the Turnstile SECRET key.
+3. Cloudflare: create a Turnstile widget for your domain, then add its SITE key as VITE_TURNSTILE_SITE_KEY in Cloudflare Pages > Environment variables and republish. Until you do, the security check is OFF on the live site. Turn it on in Supabase (step 2) and in Cloudflare together: with only one of the two, sign-up and login will fail.
+4. Supabase > Authentication > URL Configuration: set Site URL to your real address and list only your own addresses under Redirect URLs, so confirmation and reset emails can't be pointed anywhere else.
+5. Supabase > Authentication > Rate Limits: leave the defaults on, or make them stricter.
+
+The 3D house in the log-in window (AuthHouse3D.jsx) is plain WebGL, so there is nothing extra to install and it works with the site's security headers. It loads only when someone opens the window, pauses when the window is closed, holds still for people who have reduced motion switched on, and disappears quietly on a device without WebGL.
+
 Every time you push to GitHub, Cloudflare rebuilds and publishes the site in about a minute.
 
 ## What is in this folder
 - App.jsx, AdminOverview.jsx, AdminChart.jsx, main.jsx, index.css: the website (AdminOverview.jsx is the super admin dashboard home)
+- authRules.js: the email, name and password rules and the failed-login pause. PasswordMeter.jsx: the strength bar and checklist. AuthHouse3D.jsx: the 3D house in the log-in window
 - supabase-account-wall.sql: the database rule behind the sign-up wall
 - supabase-profile-photos.sql: lets each person save their own profile photo
 - supabase-add-superadmin.sql: makes an email a super admin (and shows the super admin count)
