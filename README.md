@@ -44,6 +44,8 @@ There is no "Staff sign in" link on the public site any more. Superadmins, agenc
 ## Staff sign in
 There is no "Staff sign in" link on the public site any more. Superadmins, agencies and agents sign in at your site address followed by /admin (for example yourdomain.com/admin). Bookmark it and share it only with your team.
 
+The glass look (index.css, the last two blocks) is used on the public site AND on every dashboard (superadmin, agency, agent) and the staff sign-in. The same colour variables drive light and dark mode, so one change there updates everything.
+
 ## Sign-up and login security
 What the site itself checks (in authRules.js, used by Create account, Reset password and Log in):
 - Email: trimmed and lower-cased, must be a properly formed address (no spaces, one @, a real-looking domain, 254 characters at most). Obvious typos such as gmail.con get a "Did you mean...?" suggestion that never blocks anyone.

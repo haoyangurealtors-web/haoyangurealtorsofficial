@@ -1359,3 +1359,29 @@
 @media (prefers-reduced-transparency: reduce) {
   .pk-glass, .pk-header, .pk-search-card, .pk-card, .pk-footer, .pk-modal { background: var(--surface); -webkit-backdrop-filter: none; backdrop-filter: none; }
 }
+
+/* ---- Glass look for all dashboards (superadmin, agency, agent) and the staff sign-in ---- */
+.pk-admin-shell, .pk-admin-gate { background: transparent; }
+.pk-admin-topbar, .pk-admin-sidebar, .pk-admin-gate-card, .pk-admin-stat-card, .pk-admin-chart-card,
+.pk-admin-form, .pk-admin-card, .pk-ov-card, .pk-ov-kpi {
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(20px) saturate(170%); backdrop-filter: blur(20px) saturate(170%);
+  border: 1px solid var(--glass-bd);
+  box-shadow: 0 10px 36px var(--glass-sh), inset 0 1px 0 var(--glass-hi);
+}
+.pk-admin-topbar { border-width: 0 0 1px 0; border-radius: 0; box-shadow: inset 0 -1px 0 var(--glass-bd); }
+.pk-admin-sidebar { border-width: 0 1px 0 0; border-radius: 0; box-shadow: inset -1px 0 0 var(--glass-bd); }
+.pk-admin-gate-card { border-radius: 30px; }
+.pk-admin-stat-card, .pk-admin-card, .pk-ov-kpi { border-radius: 20px; }
+/* panels inside panels: no second blur */
+.pk-admin-form .pk-admin-card, .pk-admin-chart-card .pk-admin-card, .pk-ov-card .pk-admin-card, .pk-ov-card .pk-ov-kpi {
+  -webkit-backdrop-filter: none; backdrop-filter: none; box-shadow: none;
+  background: color-mix(in srgb, var(--surface-2) 45%, transparent);
+}
+.pk-admin-card:hover { box-shadow: 0 14px 32px var(--glass-sh), inset 0 1px 0 var(--glass-hi); }
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .pk-admin-topbar, .pk-admin-sidebar, .pk-admin-gate-card, .pk-admin-stat-card, .pk-admin-chart-card, .pk-admin-form, .pk-admin-card, .pk-ov-card, .pk-ov-kpi { background: var(--surface); }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .pk-admin-topbar, .pk-admin-sidebar, .pk-admin-gate-card, .pk-admin-stat-card, .pk-admin-chart-card, .pk-admin-form, .pk-admin-card, .pk-ov-card, .pk-ov-kpi { background: var(--surface); -webkit-backdrop-filter: none; backdrop-filter: none; }
+}
