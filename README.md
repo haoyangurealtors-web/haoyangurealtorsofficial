@@ -38,6 +38,12 @@ Who can do what
 - Listings from agencies and agents always start as "Pending" until the superadmin approves them; editing never changes that.
 - After signing in or signing up, superadmins, agencies and agents go straight to their own dashboard and see only that: the public site is not shown to them. The button in the top corner of their dashboard is "Log out". Everyone else (visitors and ordinary customers) sees the normal site.
 
+## Staff sign in
+There is no "Staff sign in" link on the public site any more. Superadmins, agencies and agents sign in at your site address followed by /admin (for example yourdomain.com/admin). Bookmark it and share it only with your team.
+
+## Staff sign in
+There is no "Staff sign in" link on the public site any more. Superadmins, agencies and agents sign in at your site address followed by /admin (for example yourdomain.com/admin). Bookmark it and share it only with your team.
+
 ## Sign-up and login security
 What the site itself checks (in authRules.js, used by Create account, Reset password and Log in):
 - Email: trimmed and lower-cased, must be a properly formed address (no spaces, one @, a real-looking domain, 254 characters at most). Obvious typos such as gmail.con get a "Did you mean...?" suggestion that never blocks anyone.
@@ -66,6 +72,8 @@ Every time you push to GitHub, Cloudflare rebuilds and publishes the site in abo
 
 ## What is in this folder
 - App.jsx, AdminOverview.jsx, AdminChart.jsx, main.jsx, index.css: the website (AdminOverview.jsx is the super admin dashboard home)
+- partner.js: the partner shown on the home page (Scopio Securities). Fill in its description, website and logo there. Anything left empty is simply not shown. PartnerSection.jsx draws it.
+- partner.js: the partner shown on the home page (Scopio Securities). Fill in its description, website and logo there. Anything left empty is simply not shown. PartnerSection.jsx draws it.
 - authRules.js: the email, name and password rules and the failed-login pause. PasswordMeter.jsx: the strength bar and checklist. AuthHouse3D.jsx: the 3D house in the log-in window
 - supabase-account-wall.sql: the database rule behind the sign-up wall
 - supabase-profile-photos.sql: lets each person save their own profile photo

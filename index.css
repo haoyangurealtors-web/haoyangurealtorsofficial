@@ -1295,3 +1295,67 @@
   display: inline-flex; align-items: center; justify-content: center; transition: background-color .25s var(--ease), border-color .25s var(--ease);
 }
 .pk-pw-rule[data-ok="true"] .pk-pw-mark { background: var(--primary); border-color: var(--primary); color: var(--primary-ink); }
+
+/* ---- Premium glass look ---- */
+.pk-root {
+  --radius-card: 22px;
+  --glass-bg: rgba(255, 255, 255, 0.55); --glass-bd: rgba(255, 255, 255, 0.7);
+  --glass-hi: rgba(255, 255, 255, 0.8); --glass-sh: rgba(30, 29, 47, 0.12);
+  isolation: isolate;
+}
+.pk-root[data-theme='dark'] {
+  --glass-bg: rgba(250, 238, 238, 0.07); --glass-bd: rgba(250, 238, 238, 0.14);
+  --glass-hi: rgba(250, 238, 238, 0.16); --glass-sh: rgba(0, 0, 0, 0.35);
+}
+/* soft colour glows behind the page, so the glass has something to blur */
+.pk-root::before {
+  content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background:
+    radial-gradient(46vmax 46vmax at 92% 4%, color-mix(in srgb, var(--copper) 34%, transparent), transparent 70%),
+    radial-gradient(40vmax 40vmax at 2% 40%, color-mix(in srgb, #8F4A2F 18%, transparent), transparent 70%),
+    radial-gradient(44vmax 44vmax at 96% 80%, color-mix(in srgb, var(--copper) 24%, transparent), transparent 70%);
+}
+.pk-root[data-theme='dark']::before {
+  background:
+    radial-gradient(46vmax 46vmax at 92% 4%, color-mix(in srgb, var(--copper) 20%, transparent), transparent 70%),
+    radial-gradient(40vmax 40vmax at 2% 40%, color-mix(in srgb, var(--maroon) 60%, transparent), transparent 70%),
+    radial-gradient(44vmax 44vmax at 96% 80%, color-mix(in srgb, var(--maroon) 50%, transparent), transparent 70%);
+}
+.pk-glass, .pk-header, .pk-search-card, .pk-card, .pk-footer, .pk-modal {
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(20px) saturate(170%); backdrop-filter: blur(20px) saturate(170%);
+  border: 1px solid var(--glass-bd);
+  box-shadow: 0 10px 36px var(--glass-sh), inset 0 1px 0 var(--glass-hi);
+}
+.pk-header { border-width: 0 0 1px 0; border-radius: 0; box-shadow: inset 0 -1px 0 var(--glass-bd); }
+.pk-header.pk-scrolled { box-shadow: 0 8px 28px var(--glass-sh); }
+.pk-footer { border-width: 1px 0 0 0; border-radius: 36px 36px 0 0; }
+.pk-card:hover { box-shadow: 0 18px 40px var(--glass-sh), inset 0 1px 0 var(--glass-hi); }
+.pk-tab-row { background: color-mix(in srgb, var(--surface-2) 55%, transparent); }
+.pk-btn-primary, .pk-search-btn, .pk-hero-search-cta { border-radius: 999px; }
+
+.pk-root .pk-hero-eyebrow {
+  display: inline-flex; align-items: center; padding: 6px 14px; border-radius: 999px; text-transform: none; letter-spacing: 0;
+  font-family: 'Work Sans', system-ui, sans-serif; font-size: 0.82rem; font-weight: 500;
+  background: var(--glass-bg); border: 1px solid var(--glass-bd); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+}
+.pk-hero-heading { font-weight: 500; letter-spacing: -0.03em; line-height: 1; }
+@media (min-width: 768px) { .pk-hero-heading { font-size: clamp(2.6rem, 5.2vw, 4.6rem); } }
+
+.pk-footer-grid { grid-template-columns: 1fr; }
+@media (min-width: 768px) { .pk-footer-grid { grid-template-columns: 1.5fr 1fr; } }
+
+/* partner panel */
+.pk-partner { display: grid; grid-template-columns: 1fr; gap: 1.2rem; align-items: center; justify-items: start; padding: clamp(22px, 4vw, 40px); border-radius: clamp(26px, 4vw, 38px); }
+.pk-partner-logo { width: 88px; height: 88px; border-radius: 50%; display: grid; place-items: center; overflow: hidden; background: var(--surface-2); font-size: 1.7rem; }
+.pk-partner-logo img { width: 100%; height: 100%; object-fit: contain; padding: 14px; box-sizing: border-box; }
+.pk-partner-title { font-size: clamp(1.5rem, 3vw, 2.3rem); line-height: 1.12; letter-spacing: -0.02em; }
+@media (min-width: 768px) { .pk-partner { grid-template-columns: auto 1fr auto; gap: 2rem; } }
+
+/* fall back to solid surfaces where glass isn't supported or the person asked for less transparency */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .pk-glass, .pk-header, .pk-search-card, .pk-card, .pk-footer, .pk-modal { background: var(--surface); }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .pk-glass, .pk-header, .pk-search-card, .pk-card, .pk-footer, .pk-modal { background: var(--surface); -webkit-backdrop-filter: none; backdrop-filter: none; }
+}

@@ -54,6 +54,7 @@ import {
   MessageCircle,
 } from "lucide-react";
 import AdminOverview from "./AdminOverview.jsx";
+import PartnerSection from "./PartnerSection.jsx";
 import PasswordMeter from "./PasswordMeter.jsx";
 import {
   PASSWORD_MIN,
@@ -7440,7 +7441,7 @@ import.meta.env.PROD ? (
               Live in Nakuru · more areas coming soon
             </p>
             <h1 className="pk-display pk-hero-heading">
-              Where property meets <span className="pk-accent-text">possibilities</span>.
+              Where property meets possibilities.
             </h1>
             <p className="pk-ink-soft mt-5 text-base md:text-lg max-w-md">
               Search homes, offices and plots in Nakuru — filtered by real budget, not guesswork.
@@ -7703,6 +7704,7 @@ import.meta.env.PROD ? (
           </button>
         </div>
       </section>
+      <PartnerSection />
       </>
       )}
 
@@ -7917,15 +7919,6 @@ import.meta.env.PROD ? (
               )}
             </div>
             <div>
-              <h4 className="font-semibold text-sm mb-2.5">Explore</h4>
-              <ul className="flex flex-col gap-2 text-sm">
-                <li><button className="pk-footer-link" onClick={() => goToListings("buy", { resetFilters: true })}>Buy a home</button></li>
-                <li><button className="pk-footer-link" onClick={() => goToListings("rent", { resetFilters: true })}>Rent a home</button></li>
-                <li><button className="pk-footer-link" onClick={() => goToListings("commercial", { resetFilters: true })}>Commercial spaces</button></li>
-                <li><button className="pk-footer-link" onClick={() => goToListings("land", { resetFilters: true })}>Land</button></li>
-              </ul>
-            </div>
-            <div>
               <h4 className="font-semibold text-sm mb-2.5">Get in touch</h4>
               <ul className="flex flex-col gap-2 text-sm">
                 <li><a href={`mailto:${SITE_CONFIG.contactEmail}`}>Email us</a></li>
@@ -7948,9 +7941,6 @@ import.meta.env.PROD ? (
               </button>
               <button onClick={goToTerms} className="hover:underline">
                 Terms of Use
-              </button>
-              <button onClick={() => { setPage("admin"); setMenuOpen(false); }} className="hover:underline">
-                Staff sign in
               </button>
             </div>
           </div>
