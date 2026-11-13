@@ -74,7 +74,7 @@ The 3D house in the log-in window (AuthHouse3D.jsx) is plain WebGL, so there is 
 Every time you push to GitHub, Cloudflare rebuilds and publishes the site in about a minute.
 
 ## AI support assistant
-A chat button sits in the bottom corner of the public site (dashboards don't show it). Visitors can ask it to find properties ("2 bedroom rental in Milimani under 50k"), ask how the site works, or be pointed to the team. It replies in the language the visitor writes in (English or Kiswahili), shows matching listings as small cards, and has an "Email our team" button that pre-fills a message with the chat so far.
+The AI support assistant is called Agent Hommie. Its chat button sits in the bottom corner of the public site (dashboards don't show it). To rename it, change the name in SupportChat.jsx (title, greeting and labels), chatUtils.js and chatSystemPrompt() in _worker.js. Visitors can ask it to find properties ("2 bedroom rental in Milimani under 50k"), ask how the site works, or be pointed to the team. It replies in the language the visitor writes in (English or Kiswahili), shows matching listings as small cards, and has an "Email our team" button that pre-fills a message with the chat so far.
 
 How it works: the chat window sends each message to /api/chat on your own site. That address runs in _worker.js, adds the assistant's instructions, and asks a free open AI model (Meta Llama, running on Cloudflare Workers AI) for the reply. There is no paid AI provider and no API key to look after. The reply appears all at once when it is ready, rather than word by word.
 
@@ -88,7 +88,7 @@ Switch it on (once)
 What "free" means
 - Cloudflare gives every account 10,000 Workers AI "neurons" a day at no charge, and the allowance resets at 00:00 UTC (3:00 am in Kenya). No card is needed.
 - With the default model, a chat message costs roughly 90 neurons, or roughly 180 when the assistant also searches the listings. That is about 50 to 100 messages a day for the whole site. These are estimates: the real cost depends on how long the chats are.
-- When the daily allowance is used up, the chat shows "The assistant has reached its free limit for now" with the team's email address, and works again after the reset. Nothing else on the site is affected. On a free Cloudflare plan nothing is ever charged. If your Cloudflare account is on the paid Workers plan, usage above the free allowance IS billed (about $0.011 per 1,000 neurons), so set CHAT_DAILY_CAP below if that applies to you.
+- When the daily allowance is used up, the chat shows "Agent Hommie has reached its free limit for now" with the team's email address, and works again after the reset. Nothing else on the site is affected. On a free Cloudflare plan nothing is ever charged. If your Cloudflare account is on the paid Workers plan, usage above the free allowance IS billed (about $0.011 per 1,000 neurons), so set CHAT_DAILY_CAP below if that applies to you.
 - To stretch the allowance, switch to a smaller model with CHAT_AI_MODEL (see below). It gives several times more chats a day but its answers are simpler, it follows Kiswahili less well and it is less reliable at searching, so test it before you keep it.
 
 Optional settings (Cloudflare variables)

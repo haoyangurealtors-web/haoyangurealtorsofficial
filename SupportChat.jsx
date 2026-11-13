@@ -7,7 +7,7 @@ import { MAX_INPUT, buildHistory, emailHandoff, friendlyChatError, loadChat, new
 
 const TAG_LABELS = { Buy: "For sale", Rent: "For rent", Commercial: "Commercial", Land: "Land" };
 const GREETING =
-  "Hi, I'm the Hao yangu realtors assistant. I'm an AI, so I can make mistakes, but I can help you find a home, plot or space and answer questions about how the site works. What are you looking for?";
+  "Hi, I'm Agent Hommie, the Hao yangu realtors assistant. I'm an AI, so I can make mistakes, but I can help you find a home, plot or space and answer questions about how the site works. What are you looking for?";
 const SUGGESTIONS = ["Find a place to rent", "Homes for sale in Nakuru", "How do I contact an agent?", "How do I list my property?"];
 
 const isSmallScreen = () => typeof window !== "undefined" && Boolean(window.matchMedia) && window.matchMedia("(max-width: 640px)").matches;
@@ -273,7 +273,7 @@ export default function SupportChat({ signedIn = false, onOpenAuth = null, conta
       setMessages([...prior, userMsg, { id: botId, role: "assistant", text: "", pending: true }]);
       setInput("");
       setBusy(true);
-      setAnnounce("The assistant is replying.");
+      setAnnounce("Agent Hommie is replying.");
       stickRef.current = true;
       const controller = new AbortController();
       abortRef.current = controller;
@@ -365,13 +365,13 @@ export default function SupportChat({ signedIn = false, onOpenAuth = null, conta
   return (
     <div className="pk-chat" data-open={open ? "true" : "false"} data-raised={raised ? "true" : "false"} onKeyDown={onKeyDown}>
       {open && (
-        <section id="pk-chat-panel" ref={panelRef} className="pk-chat-panel" role="dialog" aria-label="Chat with the Hao yangu realtors assistant">
+        <section id="pk-chat-panel" ref={panelRef} className="pk-chat-panel" role="dialog" aria-label="Chat with Agent Hommie">
           <header className="pk-chat-head">
             <span className="pk-chat-avatar" aria-hidden="true">
               <Sparkles size={17} />
             </span>
             <span className="pk-chat-head-text">
-              <span className="pk-chat-title">Hao yangu assistant</span>
+              <span className="pk-chat-title">Agent Hommie</span>
               <span className="pk-chat-sub">AI assistant · property help</span>
             </span>
             {messages.length > 0 && (
@@ -449,7 +449,7 @@ export default function SupportChat({ signedIn = false, onOpenAuth = null, conta
         className="pk-chat-launcher"
         aria-expanded={open}
         aria-controls="pk-chat-panel"
-        aria-label={open ? "Close chat" : "Open the chat assistant"}
+        aria-label={open ? "Close chat" : "Chat with Agent Hommie"}
         onClick={() => setOpen((o) => !o)}
       >
         {open ? <X size={22} aria-hidden="true" /> : <MessageCircle size={22} aria-hidden="true" />}

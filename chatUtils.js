@@ -192,10 +192,10 @@ export function saveChat(messages) {
 
 export function emailHandoff(messages, email, page) {
   const subject = "Question from the website chat";
-  const head = "Hello,\n\nI was chatting with the website assistant and would like to speak to a person.\n\nMy question: \n\n";
+  const head = "Hello,\n\nI was chatting with Agent Hommie on the website and would like to speak to a person.\n\nMy question: \n\n";
   const lines = (messages || [])
     .filter((m) => !m.error && String(m.text || "").trim())
-    .map((m) => (m.role === "user" ? "Me: " : "Assistant: ") + String(m.text).trim().replace(/\s+/g, " ").slice(0, 400));
+    .map((m) => (m.role === "user" ? "Me: " : "Agent Hommie: ") + String(m.text).trim().replace(/\s+/g, " ").slice(0, 400));
   // A mailto link has a practical length limit, so keep the newest lines that fit.
   const room = 1500;
   const kept = [];
@@ -215,7 +215,7 @@ export function emailHandoff(messages, email, page) {
 
 export function friendlyChatError(status) {
   if (status === 429) return "You have sent a lot of messages in a short time. Please wait a few minutes and try again.";
-  if (status === 503) return "The assistant isn't available right now.";
-  if (status === 0) return "I couldn't reach the assistant. Please check your connection and try again.";
+  if (status === 503) return "Agent Hommie isn't available right now.";
+  if (status === 0) return "I couldn't reach Agent Hommie. Please check your connection and try again.";
   return "Something went wrong on our side. Please try again in a moment.";
 }

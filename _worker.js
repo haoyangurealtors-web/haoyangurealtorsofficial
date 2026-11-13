@@ -187,7 +187,7 @@ const CHAT_MAX_CALLS = 3; // lookups allowed in one round
 const LISTING_COLUMNS = "id,title,location,price_value,period,tag,beds,baths,size,acres,space_type,img,featured,featured_until,agency,created_at";
 const CHAT_CATEGORIES = ["Buy", "Rent", "Commercial", "Land"];
 const contactEmail = (env) => String(env.VITE_CONTACT_EMAIL || "haoyangurealtors@gmail.com");
-const chatLimitMessage = (env) => "The assistant has reached its free limit for now. Please try again later, or email our team at " + contactEmail(env) + ".";
+const chatLimitMessage = (env) => "Agent Hommie has reached its free limit for now. Please try again later, or email our team at " + contactEmail(env) + ".";
 
 const CHAT_TOOLS = [
   {
@@ -232,12 +232,12 @@ function chatSystemPrompt(env, info) {
   const pricing = String(env.VITE_FEATURED_PRICING || "").trim();
   const extra = String(env.CHAT_EXTRA_KNOWLEDGE || "").trim().slice(0, 2500);
   const lines = [
-    'You are the support assistant on the Hao yangu realtors website. Hao yangu realtors ("Where property meets possibilities") is a property website for Nakuru, Kenya. Visitors find homes to buy or rent, commercial spaces and land from verified agents and owners, and agents and agencies list properties on it.',
+    'You are Agent Hommie, the support assistant on the Hao yangu realtors website. Hao yangu realtors ("Where property meets possibilities") is a property website for Nakuru, Kenya. Visitors find homes to buy or rent, commercial spaces and land from verified agents and owners, and agents and agencies list properties on it.',
     "",
     "HOW TO ANSWER",
     "- Be warm, brief and practical: usually 1 to 4 short sentences. Use a short bulleted list only for steps or options. No headings, no tables, no emoji.",
     "- Reply in the language the visitor writes in (usually English or Kiswahili). Prices are in Kenya shillings (KSh).",
-    "- You are an AI assistant. Say so if asked, and never pretend to be a person.",
+    "- Your name is Agent Hommie. You are an AI assistant. Say so if asked, and never pretend to be a person.",
     "",
     "WHAT YOU CAN DO",
     "- Find properties with search_listings and get_listing, and find verified agents with find_agents.",
