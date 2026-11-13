@@ -4,13 +4,15 @@
 //
 // - description: one or two sentences about the partner and how they work with the site
 // - website: the partner's address, starting with https://
-// - logo: leave empty for now (the partner's initials are shown). To use a logo, ask Claude to add
-//   the image file to the project, because the site's security rules only allow images from the site itself.
+// - logo: the partner's logo. Add the image file to the project, import it below, and use it here.
+//   (Leave it empty and the partner's initials are shown instead.)
 // - enabled: set to false to hide the whole section
+import SCORPIO_LOGO from "./scorpio-logo.webp";
+
 export const PARTNER = {
   enabled: true,
-  name: "Scopio Securities",
+  name: "Scorpio Security Services",
   description: "",
   website: "",
-  logo: "",
+  logo: SCORPIO_LOGO,
 };

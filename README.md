@@ -108,8 +108,7 @@ This runs on Cloudflare Pages (it needs _worker.js and the AI binding). vercel.j
 
 ## What is in this folder
 - App.jsx, AdminOverview.jsx, AdminChart.jsx, main.jsx, index.css: the website (AdminOverview.jsx is the super admin dashboard home)
-- partner.js: the partner shown on the home page (Scopio Securities). Fill in its description, website and logo there. Anything left empty is simply not shown. PartnerSection.jsx draws it.
-- partner.js: the partner shown on the home page (Scopio Securities). Fill in its description, website and logo there. Anything left empty is simply not shown. PartnerSection.jsx draws it.
+- partner.js: the partner shown on the home page (Scorpio Security Services). Its name, logo (scorpio-logo.webp), description and website live there. Anything left empty is simply not shown. PartnerSection.jsx draws it. The website address you put there becomes the "Visit ..." button, which opens in a new tab.
 - authRules.js: the email, name and password rules and the failed-login pause. PasswordMeter.jsx: the strength bar and checklist. AuthHouse3D.jsx: the 3D house in the log-in window
 - supabase-account-wall.sql: the database rule behind the sign-up wall
 - supabase-profile-photos.sql: lets each person save their own profile photo
