@@ -24,6 +24,7 @@ You need Node.js 18 or newer (nodejs.org, the LTS version) and Git.
 10. Run supabase-usage-by-day.sql to let the Overview show visitor activity by date (Today, 7 days, 30 days, All time). Safe to run again. Until you run it, the Overview shows All time only, and the date buttons stay switched off with a short note.
 11. Run supabase-rental-deposit.sql BEFORE you publish the update that adds the deposit question (it adds the two columns the form saves to). Safe to run again. If the site is published first, adding or editing a rental will fail until the file is run.
 12. To make someone a super admin on the live site, run supabase-add-superadmin.sql in Supabase (edit the email inside first). They must sign up with that email first.
+13. To switch on the AI support assistant (the chat button), follow "AI support assistant" below. It is free (no key, no card). The site works without it; until you add the Workers AI binding the chat simply says it isn't available.
 
 Who can do what
 - Superadmin: everything. Adds agencies (the Agencies tab), reviews and approves listings, verifies agents.
@@ -72,6 +73,39 @@ The 3D house in the log-in window (AuthHouse3D.jsx) is plain WebGL, so there is 
 
 Every time you push to GitHub, Cloudflare rebuilds and publishes the site in about a minute.
 
+## AI support assistant
+A chat button sits in the bottom corner of the public site (dashboards don't show it). Visitors can ask it to find properties ("2 bedroom rental in Milimani under 50k"), ask how the site works, or be pointed to the team. It replies in the language the visitor writes in (English or Kiswahili), shows matching listings as small cards, and has an "Email our team" button that pre-fills a message with the chat so far.
+
+How it works: the chat window sends each message to /api/chat on your own site. That address runs in _worker.js, adds the assistant's instructions, and asks a free open AI model (Meta Llama, running on Cloudflare Workers AI) for the reply. There is no paid AI provider and no API key to look after. The reply appears all at once when it is ready, rather than word by word.
+
+What it can see: only what a visitor without an account already sees: listing title, location, price, bedrooms, bathrooms, size and agency, plus the name, focus, area and agency of Verified agents. It never sees descriptions, amenities, deposits, contact details, phone numbers, ratings or anyone's account, so the sign-up wall still holds. It cannot book viewings, message agents or take payments, and it is told to say so.
+
+Switch it on (once)
+1. In Cloudflare go to Workers & Pages > your Pages project > Settings > Bindings > Add > Workers AI. Set the variable name to AI (capital letters, exactly that) and save. Add it for Production, and for Preview too if you use preview deployments.
+2. Redeploy (push to GitHub, or Retry deployment in Cloudflare). Open the live site, tap the chat button and send a message to check it.
+3. If you used the old version, you can delete ANTHROPIC_API_KEY from Cloudflare. It is not used any more.
+
+What "free" means
+- Cloudflare gives every account 10,000 Workers AI "neurons" a day at no charge, and the allowance resets at 00:00 UTC (3:00 am in Kenya). No card is needed.
+- With the default model, a chat message costs roughly 90 neurons, or roughly 180 when the assistant also searches the listings. That is about 50 to 100 messages a day for the whole site. These are estimates: the real cost depends on how long the chats are.
+- When the daily allowance is used up, the chat shows "The assistant has reached its free limit for now" with the team's email address, and works again after the reset. Nothing else on the site is affected. On a free Cloudflare plan nothing is ever charged. If your Cloudflare account is on the paid Workers plan, usage above the free allowance IS billed (about $0.011 per 1,000 neurons), so set CHAT_DAILY_CAP below if that applies to you.
+- To stretch the allowance, switch to a smaller model with CHAT_AI_MODEL (see below). It gives several times more chats a day but its answers are simpler, it follows Kiswahili less well and it is less reliable at searching, so test it before you keep it.
+
+Optional settings (Cloudflare variables)
+- CHAT_AI_MODEL: the model to use. The default is @cf/meta/llama-3.3-70b-instruct-fp8-fast (the best answers of the free models, but the most allowance per chat). A cheaper choice to try is @cf/meta/llama-3.1-8b-instruct-fp8-fast. The list of models is in the Cloudflare dashboard under AI > Workers AI > Models; choose one that supports function calling.
+- CHAT_EXTRA_KNOWLEDGE: extra facts the assistant should know, up to about 2,500 characters: office hours, office address, a phone or WhatsApp number, extra FAQs. Without it the assistant only knows what is in the code and does not invent any of these.
+- CHAT_RATE_LIMIT: messages allowed per visitor per 10 minutes (default 20).
+- CHAT_KV and CHAT_DAILY_CAP: a stronger limit. In Cloudflare create a KV namespace (Storage and databases > KV), bind it to your Pages project with the variable name CHAT_KV, then set CHAT_DAILY_CAP to the most chats you want answered per day for the whole site (for example 80). Without CHAT_KV the per-visitor limit still applies, but it is only a speed bump (each Cloudflare server instance counts on its own), so rely on Cloudflare's own daily allowance as the real cap.
+- VITE_CONTACT_EMAIL and VITE_FEATURED_PRICING (already used by the site) are also what the assistant tells visitors.
+
+Changing what it knows or how it speaks: edit chatSystemPrompt() in _worker.js ("FACTS ABOUT THE SITE" and "RULES"). If you change a policy on the site (what Verified checks, how featuring works, the sign-up rules), change the matching line there too, so the assistant doesn't give old answers.
+
+Try it on your laptop: there is no Workers AI binding on a laptop, so put CF_ACCOUNT_ID and CF_API_TOKEN (and your Supabase values) in .env, then run npm run dev. Create the token in Cloudflare under My Profile > API Tokens > Create Token, using the "Workers AI" template. The dev server answers /api/chat with the same code as the live site (dev-chat-bridge.js, used only by npm run dev). Never commit .env (it is already ignored by git).
+
+Privacy: the Privacy Policy page now says that chat messages are processed by Cloudflare (Workers AI, running a Meta Llama model) to write replies and that you don't keep chats yourself. Cloudflare publishes its own terms on how Workers AI handles customer data; read them, and have whoever advises you on the Data Protection Act check that wording. The chat window also tells visitors not to share passwords or payment details.
+
+This runs on Cloudflare Pages (it needs _worker.js and the AI binding). vercel.json is only for headers and page addresses and does not run the assistant.
+
 ## What is in this folder
 - App.jsx, AdminOverview.jsx, AdminChart.jsx, main.jsx, index.css: the website (AdminOverview.jsx is the super admin dashboard home)
 - partner.js: the partner shown on the home page (Scopio Securities). Fill in its description, website and logo there. Anything left empty is simply not shown. PartnerSection.jsx draws it.
@@ -85,7 +119,9 @@ Every time you push to GitHub, Cloudflare rebuilds and publishes the site in abo
 - supabase-rental-deposit.sql: deposit columns for rentals, and the rule that every new rental must state its deposit
 - supabase-usage-by-day.sql: records visitor activity per day (Nakuru time) for the Overview date range
 - supabase-agent-ratings-visible.sql: lets signed-in visitors see agent averages and reviews (first names only)
-- _worker.js, _routes.json: share previews, sitemap and robots (Cloudflare)
+- SupportChat.jsx, chatUtils.js: the AI support chat window (its styles are the "pk-chat" block at the end of index.css)
+- _worker.js, _routes.json: share previews, sitemap and robots, and the AI assistant at /api/chat (Cloudflare)
+- dev-chat-bridge.js: lets npm run dev answer /api/chat on your laptop (not part of the live site)
 - _headers, _redirects, vercel.json: security settings and page addresses
 - index.html, favicon and icons, og-image.jpg, logo files: the page shell and branding
 - package.json, vite.config.js, tailwind.config.js, postcss.config.js: build settings

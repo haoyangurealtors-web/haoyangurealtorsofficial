@@ -56,6 +56,7 @@ import {
 import AdminOverview from "./AdminOverview.jsx";
 import PartnerSection from "./PartnerSection.jsx";
 import PasswordMeter from "./PasswordMeter.jsx";
+import SupportChat from "./SupportChat.jsx";
 import {
   PASSWORD_MIN,
   EMAIL_MAX,
@@ -2430,8 +2431,9 @@ function ProfilePage({ currentUser, onUpdateUser, onChangePhoto, favorites, list
 }
 
 const LEGAL_UPDATED = "17 October 2026";
+const PRIVACY_UPDATED = "13 November 2026"; // the AI chat assistant now runs on Cloudflare Workers AI
 
-function LegalPage({ title, intro, crumb, onBackHome, children }) {
+function LegalPage({ title, intro, crumb, onBackHome, updated = LEGAL_UPDATED, children }) {
   return (
     <section className="mx-auto max-w-3xl px-4 md:px-8 pt-8 md:pt-12 pb-20 pk-policy">
       <p className="pk-mono text-xs uppercase tracking-wide mb-3 pk-breadcrumb">
@@ -2439,7 +2441,7 @@ function LegalPage({ title, intro, crumb, onBackHome, children }) {
         <span className="pk-ink-soft"> / {crumb}</span>
       </p>
       <h1 className="pk-display text-3xl md:text-5xl font-semibold mb-3">{title}</h1>
-      <p className="pk-ink-soft text-sm mb-6">Last updated {LEGAL_UPDATED}</p>
+      <p className="pk-ink-soft text-sm mb-6">Last updated {updated}</p>
       {intro && <p className="mb-4">{intro}</p>}
       {children}
     </section>
@@ -2458,6 +2460,7 @@ function PrivacyPage({ onBackHome, onOpenTerms }) {
       title="Privacy Policy"
       crumb="Privacy Policy"
       onBackHome={onBackHome}
+      updated={PRIVACY_UPDATED}
       intro="Hao yangu realtors runs this website to help people in Nakuru, Kenya find property listed by agents and owners. This policy explains what personal information we collect, why, who we share it with, and the choices and rights you have."
     >
       <h2 className="pk-display text-xl font-semibold">1. What we collect</h2>
@@ -2466,6 +2469,7 @@ function PrivacyPage({ onBackHome, onOpenTerms }) {
         <li><strong>Agents and staff:</strong> name, email, agency, area covered and photo. We also keep the date and a tick-list of the checks we completed when verifying an agent, and our private notes. We do not store copies of your documents on this website.</li>
         <li><strong>Listings:</strong> the contact name, phone number, email address, photos and descriptions that agents or owners submit. Anyone can see the basic part of a listing (photo, title, location, price and basic facts). The rest, including the contact details, is shown to visitors who have an account.</li>
         <li><strong>Messages:</strong> anything you send us by email.</li>
+        <li><strong>Chat assistant:</strong> the messages you type into the AI assistant on this site. We do not keep these chats on our own servers or link them to your account. Please do not type passwords, payment details or ID numbers into the chat.</li>
         <li><strong>Technical information:</strong> your IP address and device details are handled by our hosting and security providers when you visit. We keep anonymous counters, such as how many pages were viewed or searches made, which do not identify you. If error reporting is switched on, it records technical details of a fault.</li>
         <li><strong>Information on your device:</strong> the site stores your sign-in details and saved properties in your browser so they work between visits. We do not use advertising or tracking cookies. Our security provider may set a small cookie to tell people from automated bots.</li>
       </ul>
@@ -2487,6 +2491,7 @@ function PrivacyPage({ onBackHome, onOpenTerms }) {
       <p>We do not sell personal information. We share it only with these groups.</p>
       <ul>
         <li><strong>Service providers that run the site for us:</strong> Supabase (database, sign-in and photo storage), Cloudflare (hosting and security, including a human check when we use it), and Resend (sending our emails). If we switch on error reporting, Sentry receives technical error details. Fonts are loaded from Google Fonts, which receives your IP address when the page loads.</li>
+        <li><strong>The AI service behind our chat assistant:</strong> Cloudflare (Workers AI), which runs an open AI model (Meta Llama) for us. When you use the chat assistant, the messages you type, and the public listing information needed to answer them, are processed by Cloudflare so the model can write the replies. The assistant cannot see the private parts of listings or any account details.</li>
         <li><strong>Visitors:</strong> the basic part of each listing and verified agents' public profiles are visible to everyone. The full description and the contact details that agents and owners choose to publish are shown to visitors who have an account.</li>
         <li><strong>Authorities:</strong> when the law requires it, or to protect people from harm or fraud.</li>
       </ul>
@@ -8121,6 +8126,14 @@ import.meta.env.PROD ? (
           </div>
         </div>
       )}
+
+      {/* ---------------- AI SUPPORT CHAT (public site only) ---------------- */}
+      <SupportChat
+        signedIn={!locked}
+        onOpenAuth={AUTH_ENABLED ? openAuth : null}
+        contactEmail={SITE_CONFIG.contactEmail}
+        raised={page === "detail"}
+      />
 
       </>
       )}

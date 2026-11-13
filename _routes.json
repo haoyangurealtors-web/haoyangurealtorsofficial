@@ -13,6 +13,7 @@
     "/verification",
     "/advertise",
     "/listing/*",
+    "/api/chat",
     "/sitemap.xml",
     "/robots.txt"
   ],
