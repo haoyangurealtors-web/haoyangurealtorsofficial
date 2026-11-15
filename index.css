@@ -1763,3 +1763,8 @@
 
 /* ---- Listing countdown (superadmin, agency and agent dashboards only) ---- */
 .pk-expiry-badge { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.pk-renew-btn:disabled { opacity: 0.55; cursor: progress; }
+.pk-renew-due { background: color-mix(in srgb, var(--brick) 16%, transparent); color: var(--brick); border-color: color-mix(in srgb, var(--brick) 45%, transparent); }
+.pk-spin { animation: pk-spin 0.9s linear infinite; }
+@keyframes pk-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .pk-spin { animation-duration: 3s; } }

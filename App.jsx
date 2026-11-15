@@ -54,6 +54,7 @@ import {
   Camera,
   MessageCircle,
   Clock,
+  RefreshCw,
 } from "lucide-react";
 import AdminOverview from "./AdminOverview.jsx";
 import PartnerSection from "./PartnerSection.jsx";
@@ -694,6 +695,7 @@ function agentListings(agent, listings) {
   return (listings || []).filter(
     (l) =>
       l.status === "approved" &&
+      !isExpired(l) &&
       sameText(l.agency, agent.agency) &&
       (sameText(l.submittedBy, agent.name) || sameText(l.contact && l.contact.name, agent.name))
   );
@@ -1010,35 +1012,63 @@ const formatShortDate = (iso) => {
 };
 const SITE_FEATURED_PRICING = import.meta.env.VITE_FEATURED_PRICING || "";
 
-// A listing stays up for 30 days from the day it is approved. Only the superadmin, the agency that owns the listing
-// and the agent who posted it can see the countdown (the database only sends it to them: supabase-listing-expiry.sql).
+// A listing stays up for 30 days from the day it is approved. When the time runs out the database takes it off the
+// public site by itself (supabase-listing-expiry.sql); only the superadmin, the agency that owns the listing and the
+// agent who posted it still see it, marked "Expired". Only the superadmin can renew it.
+// The countdown is sent only to those people, so visitors never receive it.
 const LISTING_PERIOD_DAYS = 30;
-function expiryInfo(l) {
+const DAY_MS = 86400000;
+const isExpired = (l, now = Date.now()) => {
+  if (!l || !l.expiresAt) return false;
+  const end = new Date(l.expiresAt).getTime();
+  return Number.isFinite(end) && end <= now;
+};
+const pad2 = (n) => String(n).padStart(2, "0");
+function expiryInfo(l, now = Date.now()) {
   if (!l || l.status !== "approved" || !l.expiresAt) return null;
   const end = new Date(l.expiresAt).getTime();
   if (!Number.isFinite(end)) return null;
-  const left = end - Date.now();
-  const DAY = 86400000;
-  const days = Math.ceil(left / DAY);
+  const left = end - now;
   if (left <= 0) {
-    const ago = Math.floor(-left / DAY);
-    return { label: ago < 1 ? "Expired today" : `Expired ${ago} day${ago === 1 ? "" : "s"} ago`, color: "var(--brick)", days: 0 };
+    const ago = Math.floor(-left / DAY_MS);
+    return { label: ago < 1 ? "Expired today" : `Expired ${ago} day${ago === 1 ? "" : "s"} ago`, color: "var(--brick)", expired: true, fast: false };
   }
-  if (left < DAY) return { label: "Expires today", color: "var(--brick)", days: 0 };
-  const label = `${days} day${days === 1 ? "" : "s"} left`;
+  if (left < DAY_MS) {
+    const h = Math.floor(left / 3600000);
+    const m = Math.floor((left % 3600000) / 60000);
+    const sec = Math.floor((left % 60000) / 1000);
+    const label = h > 0 ? `${h}h ${pad2(m)}m ${pad2(sec)}s left` : m > 0 ? `${m}m ${pad2(sec)}s left` : `${sec}s left`;
+    return { label, color: "var(--brick)", expired: false, fast: true };
+  }
+  const days = Math.ceil(left / DAY_MS);
   const color = days <= 3 ? "var(--brick)" : days <= 7 ? "var(--accent-text)" : "var(--ink-soft)";
-  return { label, color, days };
+  return { label: `${days} day${days === 1 ? "" : "s"} left`, color, expired: false, fast: false };
 }
 function ExpiryBadge({ listing }) {
-  const info = expiryInfo(listing);
+  const [now, setNow] = useState(() => Date.now());
+  const info = expiryInfo(listing, now);
+  const fast = Boolean(info && info.fast);
+  const live = Boolean(info && !info.expired);
+  // Ticks every second in the last 24 hours (so it can count down to 0 seconds), otherwise once a minute.
+  useEffect(() => {
+    if (!live) return undefined;
+    setNow(Date.now());
+    const t = setInterval(() => setNow(Date.now()), fast ? 1000 : 60000);
+    return () => clearInterval(t);
+  }, [live, fast, listing && listing.expiresAt]);
   if (!info) return null;
   return (
     <span
       className="pk-status-badge pk-expiry-badge"
       style={{ "--badge-color": info.color }}
-      title={`Listing period (${LISTING_PERIOD_DAYS} days) ends ${formatShortDate(listing.expiresAt)}`}
+      title={
+        info.expired
+          ? `The ${LISTING_PERIOD_DAYS}-day listing period ended ${formatShortDate(listing.expiresAt)}. It is hidden from the public site until the superadmin renews it.`
+          : `Listing period (${LISTING_PERIOD_DAYS} days) ends ${formatShortDate(listing.expiresAt)}. It comes off the site by itself then.`
+      }
     >
       <Clock size={11} aria-hidden="true" /> {info.label}
+      {info.expired ? " · off the site" : ""}
     </span>
   );
 }
@@ -4569,6 +4599,26 @@ function AdminListingsPanel({ listings, onUpdateListings, onToast, adminName, op
     });
   };
 
+  // Renewing gives the listing a fresh 30 days from now and puts an expired one back on the site.
+  // The database checks that the caller is the superadmin, so this can't be done from anywhere else.
+  const [renewingId, setRenewingId] = useState(null);
+  const renewListing = async (listing) => {
+    if (renewingId) return;
+    setRenewingId(listing.id);
+    try {
+      const session = await getValidSession();
+      if (!session) throw Object.assign(new Error("Not signed in"), { status: 401 });
+      const end = await sbRequest("/rest/v1/rpc/hy_renew_listing", { method: "POST", token: session.access_token, body: { p_listing_id: listing.id } });
+      const expiresAt = typeof end === "string" && end ? end : new Date(Date.now() + LISTING_PERIOD_DAYS * DAY_MS).toISOString();
+      onUpdateListings(listings.map((l) => (l.id === listing.id ? { ...l, expiresAt } : l)));
+      onToast?.(`"${listing.title}" renewed for ${LISTING_PERIOD_DAYS} days`, "success");
+    } catch (err) {
+      onToast?.("Couldn't renew that listing. Check that supabase-listing-expiry.sql has been run, then try again.", "danger");
+    } finally {
+      setRenewingId(null);
+    }
+  };
+
   const setStatus = (id, status) => {
     const listing = listings.find((l) => l.id === id);
     const restart = status === "approved" && listing && listing.status !== "approved" ? { expiresAt: new Date(Date.now() + LISTING_PERIOD_DAYS * 86400000).toISOString() } : {};
@@ -4678,6 +4728,17 @@ function AdminListingsPanel({ listings, onUpdateListings, onToast, adminName, op
                 </p>
               </div>
               <div className="pk-admin-listing-actions">
+                {REMOTE && l.status === "approved" && l.expiresAt && (
+                  <button
+                    className={`pk-icon-btn pk-renew-btn ${isExpired(l) ? "pk-renew-due" : ""}`}
+                    title={`Renew for ${LISTING_PERIOD_DAYS} days`}
+                    aria-label={`Renew "${l.title}" for ${LISTING_PERIOD_DAYS} days`}
+                    disabled={renewingId === l.id}
+                    onClick={() => renewListing(l)}
+                  >
+                    <RefreshCw size={15} className={renewingId === l.id ? "pk-spin" : ""} />
+                  </button>
+                )}
                 {l.status === "approved" && (
                   <button className="pk-icon-btn" title="Feature this listing" aria-label="Feature this listing" onClick={() => setFeatureFor(featureFor === l.id ? null : l.id)}>
                     <Star size={15} fill={isFeatured(l) ? "currentColor" : "none"} />
@@ -6869,7 +6930,15 @@ export default function App() {
       ? { secondaryLabel: null, secondaryOptions: [], budgetOptions: TAB_META.buy.budgetOptions }
       : TAB_META[listingCategory];
 
-  const approvedListings = useMemo(() => listings.filter((l) => l.status === "approved"), [listings]);
+  // Expired listings come off the site. The database already hides them from visitors; this keeps them off the
+  // public pages for the superadmin, agencies and agents too (they still see them, marked Expired, in their dashboards).
+  const [expiryTick, setExpiryTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setExpiryTick((n) => n + 1), 15000);
+    return () => clearInterval(t);
+  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const approvedListings = useMemo(() => listings.filter((l) => l.status === "approved" && !isExpired(l)), [listings, expiryTick]);
 
   const filteredProperties = useMemo(() => {
     let list = approvedListings.filter((p) => (listingCategory === "all" ? true : p.tag.toLowerCase() === listingCategory));
