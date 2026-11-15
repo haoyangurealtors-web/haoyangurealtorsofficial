@@ -1545,6 +1545,85 @@ function HeroCarousel({ items, onOpen }) {
   );
 }
 
+// Full-bleed hero background: featured listing photos, one at a time, fading into each other.
+function HeroBackdrop({ items, onOpen }) {
+  const [index, setIndex] = useState(0);
+  const [reach, setReach] = useState(1);
+  const [failed, setFailed] = useState({});
+  const [tabVisible, setTabVisible] = useState(true);
+  const [reduceMotion, setReduceMotion] = useState(false);
+
+  const slides = items.filter((l) => l && l.img && !failed[l.id]);
+  const n = slides.length;
+
+  useEffect(() => {
+    const mq = window.matchMedia ? window.matchMedia("(prefers-reduced-motion: reduce)") : null;
+    setReduceMotion(Boolean(mq && mq.matches));
+    const onVis = () => setTabVisible(!document.hidden);
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, []);
+
+  useEffect(() => {
+    if (index >= n) setIndex(0);
+  }, [n, index]);
+
+  // Only the photo on show and the next one are loaded, so the home page stays quick on a phone.
+  useEffect(() => {
+    setReach((r) => Math.max(r, index + 1));
+  }, [index]);
+
+  const paused = !tabVisible || reduceMotion || n < 2;
+  useEffect(() => {
+    if (paused) return undefined;
+    const t = setTimeout(() => setIndex((i) => (i + 1) % n), 6000);
+    return () => clearTimeout(t);
+  }, [index, paused, n]);
+
+  if (n === 0) return null;
+  const current = slides[index] || slides[0];
+  const tag = HERO_TAG[String(current.tag || "").toLowerCase()] || { label: current.tag, icon: HomeIcon };
+  const TagIcon = tag.icon;
+
+  return (
+    <>
+      <div className="pk-hero-slides" aria-hidden="true">
+        {slides.map((l, i) =>
+          i <= reach ? (
+            <img
+              key={l.id}
+              src={l.img}
+              alt=""
+              className="pk-hero-slide"
+              data-active={i === index ? "true" : "false"}
+              decoding="async"
+              fetchPriority={i === 0 ? "high" : undefined}
+              onError={() => setFailed((f) => ({ ...f, [l.id]: true }))}
+            />
+          ) : null
+        )}
+      </div>
+      <div className="pk-hero-chip-row" role="region" aria-roledescription="carousel" aria-label="Featured listings">
+        <button type="button" className="pk-hero-chip" onClick={() => onOpen(current.id)} aria-label={`${current.title}, ${current.location}, ${current.price}${current.period || ""}. Open listing`}>
+          <TagIcon size={18} aria-hidden="true" />
+          <span>
+            <strong>{current.title}</strong>
+            <em>{tag.label} · {current.price}{current.period || ""} · {current.location}</em>
+          </span>
+        </button>
+        {n > 1 && (
+          <div className="pk-hero-dots">
+            {slides.map((l, i) => (
+              <button key={l.id} type="button" className="pk-hero-dot" aria-label={`Show listing ${i + 1} of ${n}`} aria-current={i === index ? "true" : undefined} onClick={() => setIndex(i)} />
+            ))}
+          </div>
+        )}
+      </div>
+      <div className="sr-only" aria-live="polite">{`Listing ${index + 1} of ${n}: ${current.title}`}</div>
+    </>
+  );
+}
+
 function HeroSearch({ idPrefix, sheet = false, title, activeTab, onTabChange, location, setLocation, secondary, setSecondary, budget, setBudget, onSearch }) {
   const meta = TAB_META[activeTab];
   return (
@@ -7453,6 +7532,7 @@ import.meta.env.PROD ? (
       <section ref={heroRef} className="pk-hero-wrap">
         <div className="pk-hero-card">
           <img src={HERO_SCENE_SRC} alt="" className="pk-hero-bg" />
+          <HeroBackdrop items={heroFeatured} onOpen={openListing} />
           <div className="pk-hero-scrim" aria-hidden="true" />
           <div className="pk-hero-inner">
             <div className="pk-hero-copy">
