@@ -23,6 +23,7 @@ You need Node.js 18 or newer (nodejs.org, the LTS version) and Git.
 9. Then run supabase-agent-ratings-visible.sql, which lets signed-in visitors see each agent's average, rating breakdown and written reviews. Safe to run again. Until you run it, visitors can still rate but see no scores.
 10. Run supabase-usage-by-day.sql to let the Overview show visitor activity by date (Today, 7 days, 30 days, All time). Safe to run again. Until you run it, the Overview shows All time only, and the date buttons stay switched off with a short note.
 11. Run supabase-rental-deposit.sql BEFORE you publish the update that adds the deposit question (it adds the two columns the form saves to). Safe to run again. If the site is published first, adding or editing a rental will fail until the file is run.
+12. Run supabase-listing-expiry.sql to start the 30-day listing period and show the "N days left" badge on approved listings. Only the superadmin, the owning agency and the posting agent can see it (the database enforces this). Safe to run again. Until you run it, no badge appears. Existing listings get a fresh 30 days from the day you run it.
 12. To make someone a super admin on the live site, run supabase-add-superadmin.sql in Supabase (edit the email inside first). They must sign up with that email first.
 13. To switch on the AI support assistant (the chat button), follow "AI support assistant" below. It is free (no key, no card). The site works without it; until you add the Workers AI binding the chat simply says it isn't available.
 
@@ -114,6 +115,7 @@ This runs on Cloudflare Pages (it needs _worker.js and the AI binding). vercel.j
 - supabase-agents-and-agencies.sql: agent logins, and the rules for who can add, edit and remove which listings
 - supabase-agent-ratings-and-phone.sql: agent phone numbers and agent ratings, and who can see them
 - supabase-rental-deposit.sql: deposit columns for rentals, and the rule that every new rental must state its deposit
+- supabase-listing-expiry.sql: the 30-day listing period, its private countdown table and the rules for who can read it
 - supabase-usage-by-day.sql: records visitor activity per day (Nakuru time) for the Overview date range
 - supabase-agent-ratings-visible.sql: lets signed-in visitors see agent averages and reviews (first names only)
 - SupportChat.jsx, chatUtils.js: the AI support chat window (its styles are the "pk-chat" block at the end of index.css)

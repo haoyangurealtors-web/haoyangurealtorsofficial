@@ -1760,3 +1760,6 @@
   .pk-cat-card, .pk-cat-card .pk-category-icon, .pk-cat-slide { transition-duration: .01s; }
   .pk-cat-card:hover { transform: none; }
 }
+
+/* ---- Listing countdown (superadmin, agency and agent dashboards only) ---- */
+.pk-expiry-badge { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }

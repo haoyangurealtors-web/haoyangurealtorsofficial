@@ -53,6 +53,7 @@ import {
   Pencil,
   Camera,
   MessageCircle,
+  Clock,
 } from "lucide-react";
 import AdminOverview from "./AdminOverview.jsx";
 import PartnerSection from "./PartnerSection.jsx";
@@ -758,7 +759,7 @@ async function fetchAgentRows(token) {
   return sbRequest(`/rest/v1/agents?select=${PUBLIC_AGENT_COLUMNS}&order=id.asc`, { token });
 }
 
-async function fetchRemoteData(isSuperadmin, isStaff = isSuperadmin) {
+async function fetchRemoteData(isSuperadmin, isStaff = isSuperadmin, withExpiry = isStaff) {
   const session = await getValidSession();
   const token = session ? session.access_token : undefined;
   const listingColumns = token ? "*" : PUBLIC_LISTING_COLUMNS;
@@ -811,7 +812,19 @@ async function fetchRemoteData(isSuperadmin, isStaff = isSuperadmin) {
       agents = await sbRequest("/rest/v1/agents?select=*&order=id.asc", { token });
     }
   }
-  const data = { listings: listingRows.map(listingFromRow), agents: agents.map(agentFromRow) };
+  // The listing countdown: the superadmin, agencies and agents only (the database sends everyone else nothing).
+  // Before supabase-listing-expiry.sql has been run this table doesn't exist, so a failure here is not an error.
+  let expiryById = null;
+  if (token && withExpiry) {
+    try {
+      const rows = await sbRequest("/rest/v1/listing_expiry?select=listing_id,expires_at&limit=2000", { token });
+      expiryById = new Map((rows || []).map((r) => [Number(r.listing_id), r.expires_at]));
+    } catch (e) {
+      expiryById = null;
+    }
+  }
+  const mappedListings = listingRows.map(listingFromRow).map((l) => (expiryById && expiryById.has(l.id) ? { ...l, expiresAt: expiryById.get(l.id) } : l));
+  const data = { listings: mappedListings, agents: agents.map(agentFromRow) };
   if (staffRows) data.agencies = staffRows.filter((r) => r.role === "admin").map(staffFromRow);
   if (Array.isArray(loginRows)) data.agentLogins = loginRows.map(agentLoginFromRow);
   if (Array.isArray(ratingRows)) data.ratings = ratingRows.map(ratingFromRow);
@@ -996,6 +1009,39 @@ const formatShortDate = (iso) => {
   }
 };
 const SITE_FEATURED_PRICING = import.meta.env.VITE_FEATURED_PRICING || "";
+
+// A listing stays up for 30 days from the day it is approved. Only the superadmin, the agency that owns the listing
+// and the agent who posted it can see the countdown (the database only sends it to them: supabase-listing-expiry.sql).
+const LISTING_PERIOD_DAYS = 30;
+function expiryInfo(l) {
+  if (!l || l.status !== "approved" || !l.expiresAt) return null;
+  const end = new Date(l.expiresAt).getTime();
+  if (!Number.isFinite(end)) return null;
+  const left = end - Date.now();
+  const DAY = 86400000;
+  const days = Math.ceil(left / DAY);
+  if (left <= 0) {
+    const ago = Math.floor(-left / DAY);
+    return { label: ago < 1 ? "Expired today" : `Expired ${ago} day${ago === 1 ? "" : "s"} ago`, color: "var(--brick)", days: 0 };
+  }
+  if (left < DAY) return { label: "Expires today", color: "var(--brick)", days: 0 };
+  const label = `${days} day${days === 1 ? "" : "s"} left`;
+  const color = days <= 3 ? "var(--brick)" : days <= 7 ? "var(--accent-text)" : "var(--ink-soft)";
+  return { label, color, days };
+}
+function ExpiryBadge({ listing }) {
+  const info = expiryInfo(listing);
+  if (!info) return null;
+  return (
+    <span
+      className="pk-status-badge pk-expiry-badge"
+      style={{ "--badge-color": info.color }}
+      title={`Listing period (${LISTING_PERIOD_DAYS} days) ends ${formatShortDate(listing.expiresAt)}`}
+    >
+      <Clock size={11} aria-hidden="true" /> {info.label}
+    </span>
+  );
+}
 
 // ---- What "Verified" means. EDIT THESE so they match what you really check. ----
 const VERIFICATION_UPDATED = "October 2026";
@@ -4525,7 +4571,8 @@ function AdminListingsPanel({ listings, onUpdateListings, onToast, adminName, op
 
   const setStatus = (id, status) => {
     const listing = listings.find((l) => l.id === id);
-    onUpdateListings(listings.map((l) => (l.id === id ? { ...l, status } : l)));
+    const restart = status === "approved" && listing && listing.status !== "approved" ? { expiresAt: new Date(Date.now() + LISTING_PERIOD_DAYS * 86400000).toISOString() } : {};
+    onUpdateListings(listings.map((l) => (l.id === id ? { ...l, status, ...restart } : l)));
     if (!listing) return;
     if (status === "approved") onToast?.(`"${listing.title}" is now live`, "success");
     else if (status === "held") onToast?.(`"${listing.title}" put on hold`, "warning");
@@ -4609,6 +4656,7 @@ function AdminListingsPanel({ listings, onUpdateListings, onToast, adminName, op
                   <span className="pk-status-badge" style={{ "--badge-color": LISTING_STATUS_META[l.status].color }}>
                     {LISTING_STATUS_META[l.status].label}
                   </span>
+                  <ExpiryBadge listing={l} />
                   {l.featured && (
                     <span className="pk-status-badge" style={{ "--badge-color": isFeatured(l) ? "var(--primary)" : "var(--ink-soft)" }}>
                       {isFeatured(l)
@@ -5518,6 +5566,7 @@ function AgencyListingsPanel({ role = "agency", agency, userName, listings, allL
                   <span className="pk-status-badge" style={{ "--badge-color": LISTING_STATUS_META[l.status].color }}>
                     {LISTING_STATUS_META[l.status].label}
                   </span>
+                  <ExpiryBadge listing={l} />
                 </div>
                 <p className="pk-ink-soft text-xs mt-1">
                   {l.location} · {l.price}
@@ -6229,7 +6278,7 @@ export default function App() {
   const refreshRemote = async () => {
     try {
       // Agents sign in as staff too, but only agencies and the superadmin get the private agent notes and logins.
-      const data = await fetchRemoteData(Boolean(currentUser && currentUser.role === "superadmin"), Boolean(currentUser && currentUser.role !== "agent"));
+      const data = await fetchRemoteData(Boolean(currentUser && currentUser.role === "superadmin"), Boolean(currentUser && currentUser.role !== "agent"), Boolean(currentUser));
       setListings(data.listings);
       setAgents(data.agents);
       if (data.agencies) setAgencies(data.agencies);
