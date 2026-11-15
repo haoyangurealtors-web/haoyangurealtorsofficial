@@ -1624,6 +1624,109 @@ function HeroBackdrop({ items, onOpen }) {
   );
 }
 
+// A category tile on the home page: shows that category's listing photos one at a time behind the text.
+function CategoryTile({ cat, count, photos, index, onOpen }) {
+  const CatIcon = cat.icon;
+  const [i, setI] = useState(0);
+  const [reach, setReach] = useState(1);
+  const [failed, setFailed] = useState({});
+  const [hover, setHover] = useState(false);
+  const [tabVisible, setTabVisible] = useState(true);
+  const [reduceMotion, setReduceMotion] = useState(false);
+
+  const slides = photos.filter((l) => l && l.img && !failed[l.id]);
+  const n = slides.length;
+
+  useEffect(() => {
+    const mq = window.matchMedia ? window.matchMedia("(prefers-reduced-motion: reduce)") : null;
+    setReduceMotion(Boolean(mq && mq.matches));
+    const onVis = () => setTabVisible(!document.hidden);
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, []);
+
+  useEffect(() => {
+    if (i >= n) setI(0);
+  }, [n, i]);
+  useEffect(() => {
+    setReach((r) => Math.max(r, i + 1));
+  }, [i]);
+
+  // Each tile keeps its own rhythm so the four never change together.
+  const paused = hover || !tabVisible || reduceMotion || n < 2;
+  useEffect(() => {
+    if (paused) return undefined;
+    const t = setTimeout(() => setI((x) => (x + 1) % n), 4200 + index * 650);
+    return () => clearTimeout(t);
+  }, [i, paused, n, index]);
+
+  const onMove = (e) => {
+    if (e.pointerType && e.pointerType !== "mouse") return;
+    const el = e.currentTarget;
+    const r = el.getBoundingClientRect();
+    el.style.setProperty("--mx", `${Math.round(e.clientX - r.left)}px`);
+    el.style.setProperty("--my", `${Math.round(e.clientY - r.top)}px`);
+  };
+
+  const current = n ? slides[i] || slides[0] : null;
+
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      onPointerEnter={(e) => {
+        if (e.pointerType === "mouse") setHover(true);
+      }}
+      onPointerLeave={(e) => {
+        if (e.pointerType === "mouse") setHover(false);
+      }}
+      onPointerMove={onMove}
+      className={`pk-card pk-cat-card text-left ${n ? "pk-cat-has-media" : ""}`}
+    >
+      {n > 0 && (
+        <>
+          <span className="pk-cat-media" aria-hidden="true">
+            {slides.map((l, k) =>
+              k <= reach ? (
+                <img
+                  key={l.id}
+                  src={l.img}
+                  alt=""
+                  loading="lazy"
+                  decoding="async"
+                  className="pk-cat-slide"
+                  data-active={k === i ? "true" : "false"}
+                  onError={() => setFailed((f) => ({ ...f, [l.id]: true }))}
+                />
+              ) : null
+            )}
+          </span>
+          <span className="pk-cat-veil" aria-hidden="true" />
+          <span className="pk-cat-shade" aria-hidden="true" />
+        </>
+      )}
+      <div className="pk-category-icon">
+        <CatIcon size={20} />
+      </div>
+      <div className="min-w-0 pk-cat-text">
+        <h3 className="pk-display text-base md:text-lg font-semibold">{cat.title}</h3>
+        <div className="pk-cat-swap hidden md:grid">
+          <p className="pk-ink-soft text-sm mt-1 pk-cat-blurb">{cat.blurb}</p>
+          {current && (
+            <p className="text-sm mt-1 pk-cat-now" aria-hidden="true">
+              <strong>{current.title}</strong>
+              <span>{current.price}{current.period || ""}</span>
+            </p>
+          )}
+        </div>
+        <div className="pk-mono text-xs pk-primary-text mt-0.5 md:mt-3 flex items-center gap-1 whitespace-nowrap">
+          {count} listing{count === 1 ? "" : "s"} <ArrowUpRight size={12} className="hidden md:inline-block pk-cat-arrow" />
+        </div>
+      </div>
+    </button>
+  );
+}
+
 function HeroSearch({ idPrefix, sheet = false, title, activeTab, onTabChange, location, setLocation, secondary, setSecondary, budget, setBudget, onSearch }) {
   const meta = TAB_META[activeTab];
   return (
@@ -7616,27 +7719,10 @@ import.meta.env.PROD ? (
           </div>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5 md:gap-5">
-          {CATEGORIES.map((cat) => {
-            const CatIcon = cat.icon;
-            const count = approvedListings.filter((l) => l.tag.toLowerCase() === cat.key).length;
-            return (
-              <button
-                key={cat.key}
-                onClick={() => handleNavClick(cat.key)}
-                className="pk-card pk-cat-card text-left"
-              >
-                <div className="pk-category-icon">
-                  <CatIcon size={20} />
-                </div>
-                <div className="min-w-0">
-                  <h3 className="pk-display text-base md:text-lg font-semibold">{cat.title}</h3>
-                  <p className="pk-ink-soft text-sm mt-1 hidden md:block">{cat.blurb}</p>
-                  <div className="pk-mono text-xs pk-primary-text mt-0.5 md:mt-3 flex items-center gap-1 whitespace-nowrap">
-                    {count} listing{count === 1 ? "" : "s"} <ArrowUpRight size={12} className="hidden md:inline-block" />
-                  </div>
-                </div>
-              </button>
-            );
+          {CATEGORIES.map((cat, idx) => {
+            const inCat = approvedListings.filter((l) => String(l.tag || "").toLowerCase() === cat.key);
+            const photos = [...inCat].sort((a, b) => b.id - a.id).slice(0, 6);
+            return <CategoryTile key={cat.key} cat={cat} index={idx} count={inCat.length} photos={photos} onOpen={() => handleNavClick(cat.key)} />;
           })}
         </div>
       </section>
