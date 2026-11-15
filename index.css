@@ -1271,12 +1271,23 @@
 .pk-modal { max-height: calc(100vh - 40px); max-height: calc(100dvh - 40px); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
 
 .pk-auth-3d {
-  position: relative; height: 150px; margin: -12px -10px 8px; border-radius: 14px; overflow: hidden;
-  background: radial-gradient(ellipse 70% 60% at 50% 78%, color-mix(in srgb, var(--accent) 30%, transparent), transparent 72%);
+  position: relative; height: 168px; margin: -12px -10px 8px; border-radius: 18px; overflow: hidden;
+  background:
+    radial-gradient(ellipse 60% 46% at 50% 84%, color-mix(in srgb, var(--accent) 34%, transparent), transparent 74%),
+    linear-gradient(180deg, color-mix(in srgb, var(--accent) 9%, transparent), transparent 70%);
+}
+/* a few stars when the dark theme is on */
+.pk-root[data-theme='dark'] .pk-auth-3d::before {
+  content: ''; position: absolute; inset: 0; pointer-events: none; opacity: 0.85;
+  background:
+    radial-gradient(1.4px 1.4px at 12% 22%, #FAEEEE, transparent), radial-gradient(1px 1px at 27% 58%, #FAEEEE, transparent),
+    radial-gradient(1.6px 1.6px at 41% 14%, #FFE2B8, transparent), radial-gradient(1px 1px at 63% 30%, #FAEEEE, transparent),
+    radial-gradient(1.4px 1.4px at 78% 16%, #FAEEEE, transparent), radial-gradient(1px 1px at 90% 48%, #FFE2B8, transparent),
+    radial-gradient(1px 1px at 6% 66%, #FAEEEE, transparent), radial-gradient(1.2px 1.2px at 54% 8%, #FAEEEE, transparent);
 }
 .pk-auth-3d-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; touch-action: pan-y; }
 .pk-auth-3d-canvas:active { cursor: grabbing; }
-@media (max-height: 760px) { .pk-auth-3d { height: 108px; } }
+@media (max-height: 760px) { .pk-auth-3d { height: 120px; } }
 @media (max-height: 600px) { .pk-auth-3d { display: none; } }
 
 .pk-email-fix { display: block; margin-top: 4px; font-size: 0.78rem; font-weight: 400; color: var(--ink-soft); }
