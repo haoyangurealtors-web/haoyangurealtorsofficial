@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, lazy, Suspense } from "react";
 import LOGO_IMAGE_SRC from "./logo.webp";
+import HERO_SCENE_SRC from "./hero-scene.svg";
 import LOGO_IMAGE_SRC_DARK from "./logo-dark.webp";
 import {
   Menu,
@@ -1544,10 +1545,11 @@ function HeroCarousel({ items, onOpen }) {
   );
 }
 
-function HeroSearch({ idPrefix, sheet = false, activeTab, onTabChange, location, setLocation, secondary, setSecondary, budget, setBudget, onSearch }) {
+function HeroSearch({ idPrefix, sheet = false, title, activeTab, onTabChange, location, setLocation, secondary, setSecondary, budget, setBudget, onSearch }) {
   const meta = TAB_META[activeTab];
   return (
     <div className={`pk-search-card ${sheet ? "pk-search-card-sheet" : ""}`}>
+      {title && <h2 className="pk-display pk-search-title">{title}</h2>}
       <div className="pk-tab-row" style={{ scrollbarWidth: "none" }}>
         {Object.entries(TAB_META).map(([key, m]) => {
           const TIcon = m.icon;
@@ -7269,8 +7271,8 @@ import.meta.env.PROD ? (
       </a>
 
       {/* ---------------- HEADER ---------------- */}
-      <header className={`pk-header ${scrolled ? "pk-scrolled" : ""}`}>
-        <div className="mx-auto max-w-7xl px-4 md:px-8 flex items-center justify-between h-16 md:h-20">
+      <header className={`pk-header ${page === "home" ? "pk-header-over" : ""} ${scrolled ? "pk-scrolled" : ""}`}>
+        <div className="pk-header-row mx-auto max-w-7xl px-4 md:px-8 flex items-center justify-between h-16 md:h-20">
           <div className="flex items-center gap-2.5 cursor-pointer" onClick={goHome}>
             <LogoMark />
             <span className="pk-display pk-wordmark">
@@ -7278,7 +7280,10 @@ import.meta.env.PROD ? (
             </span>
           </div>
 
-          <nav className="hidden md:flex items-center gap-1">
+          <nav className="pk-nav-pill hidden md:flex items-center gap-1" aria-label="Main">
+            <button className={`pk-navlink ${page === "home" ? "pk-navlink-active" : ""}`} aria-current={page === "home" ? "page" : undefined} onClick={goHome}>
+              Home
+            </button>
             {NAV_LINKS.map((link) => (
               <button
                 key={link.key}
@@ -7291,9 +7296,6 @@ import.meta.env.PROD ? (
           </nav>
 
           <div className="hidden md:flex items-center gap-3">
-            <button className="pk-icon-btn" aria-label="Toggle theme" onClick={() => setTheme((t) => (t === "light" ? "dark" : "light"))}>
-              {theme === "light" ? <Moon size={17} /> : <Sun size={17} />}
-            </button>
             {currentUser ? (
               <>
                 {isStaffUser(currentUser) && (
@@ -7311,9 +7313,6 @@ import.meta.env.PROD ? (
               </>
             ) : account ? (
               <>
-                <button className="pk-btn-outline" onClick={goToProfile}>
-                  <Heart size={15} /> <span className="hidden xl:inline">Saved</span>{favorites.size > 0 ? ` (${favorites.size})` : ""}
-                </button>
                 <button className="pk-user-chip" title={account.email} onClick={goToProfile}>
                   <Avatar name={account.name} src={account.avatar} size={30} />
                   <span>{account.name}</span>
@@ -7324,9 +7323,6 @@ import.meta.env.PROD ? (
               </>
             ) : (
               <>
-                <button className="pk-btn-outline" onClick={goToProfile}>
-                  <Heart size={15} /> <span className="hidden xl:inline">Saved</span>{favorites.size > 0 ? ` (${favorites.size})` : ""}
-                </button>
                 {AUTH_ENABLED ? (
                   <>
                     <button className="pk-btn-outline" onClick={() => openAuth("login")}>
@@ -7343,6 +7339,21 @@ import.meta.env.PROD ? (
                 )}
               </>
             )}
+            <div className="flex items-center gap-1.5">
+              {!currentUser && (
+                <button
+                  className="pk-icon-btn pk-icon-btn-sm"
+                  aria-label={favorites.size > 0 ? `Saved properties (${favorites.size})` : "Saved properties"}
+                  title={favorites.size > 0 ? `Saved properties (${favorites.size})` : "Saved properties"}
+                  onClick={goToProfile}
+                >
+                  <Heart size={15} />
+                </button>
+              )}
+              <button className="pk-icon-btn pk-icon-btn-sm" aria-label="Toggle theme" title="Toggle theme" onClick={() => setTheme((t) => (t === "light" ? "dark" : "light"))}>
+                {theme === "light" ? <Moon size={15} /> : <Sun size={15} />}
+              </button>
+            </div>
           </div>
 
           <div className="flex md:hidden items-center gap-2">
@@ -7439,57 +7450,42 @@ import.meta.env.PROD ? (
       {page === "home" && (
       <>
       {/* ---------------- HERO ---------------- */}
-      <section ref={heroRef} className="mx-auto max-w-7xl px-4 md:px-8 pt-6 md:pt-12 pb-12 md:pb-16">
-        <div className="pk-hero-grid">
-          <div>
-            <p className="pk-mono pk-hero-eyebrow pk-primary-text uppercase mb-4">
-              Live in Nakuru · more areas coming soon
-            </p>
-            <h1 className="pk-display pk-hero-heading">
-              Where property meets possibilities.
-            </h1>
-            <p className="pk-ink-soft mt-5 text-base md:text-lg max-w-md">
-              Search homes, offices and plots in Nakuru — filtered by real budget, not guesswork.
-            </p>
-          </div>
-          {heroFeatured.length > 0 ? (
-            <HeroCarousel items={heroFeatured} onOpen={openListing} />
-          ) : (
-            <div className="hidden md:block pk-primary-text opacity-80">
-              <svg viewBox="0 0 320 220" width="100%" aria-hidden="true">
-                <polyline points="0,150 40,150 60,110 90,150 110,80 140,150 170,120 190,150 220,60 250,150 280,150 300,100 320,150"
-                  fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" opacity="0.55" />
-                <circle cx="255" cy="42" r="20" fill="var(--accent)" opacity="0.9" />
-                <rect x="30" y="150" width="26" height="34" fill="currentColor" opacity="0.35" />
-                <rect x="95" y="150" width="34" height="42" fill="currentColor" opacity="0.5" />
-                <rect x="200" y="150" width="30" height="30" fill="currentColor" opacity="0.3" />
-              </svg>
+      <section ref={heroRef} className="pk-hero-wrap">
+        <div className="pk-hero-card">
+          <img src={HERO_SCENE_SRC} alt="" className="pk-hero-bg" />
+          <div className="pk-hero-scrim" aria-hidden="true" />
+          <div className="pk-hero-inner">
+            <div className="pk-hero-copy">
+              <p className="pk-hero-eyebrow">Live in Nakuru · more areas coming soon</p>
+              <h1 className="pk-display pk-hero-heading">Where property meets possibilities.</h1>
+              <p className="pk-hero-sub">Search homes, offices and plots in Nakuru — filtered by real budget, not guesswork.</p>
+              {/* Phone: one big Search button that opens the search sheet */}
+              <button type="button" className="pk-hero-search-cta md:hidden" onClick={() => setSearchSheetOpen(true)}>
+                <Search size={18} /> Search Properties <ArrowRight size={18} />
+              </button>
             </div>
-          )}
+            {/* Tablet and desktop: the search card floats on the right of the hero */}
+            <div className="pk-hero-panel hidden md:block">
+              <HeroSearch
+                idPrefix="pk"
+                title="Find a place that fits your life"
+                activeTab={activeTab}
+                onTabChange={handleTabChange}
+                location={location}
+                setLocation={setLocation}
+                secondary={secondary}
+                setSecondary={setSecondary}
+                budget={budget}
+                setBudget={setBudget}
+                onSearch={() => goToListings(activeTab, { resetFilters: false })}
+              />
+            </div>
+          </div>
         </div>
 
-        {/* Phone: shortcut icons and one big Search button that opens the search sheet */}
-        <div className="md:hidden">
+        {/* Phone: category shortcuts under the hero */}
+        <div className="md:hidden px-3">
           <HeroShortcuts onPick={handleShortcut} />
-          <button type="button" className="pk-hero-search-cta" onClick={() => setSearchSheetOpen(true)}>
-            <Search size={18} /> Search Properties <ArrowRight size={18} />
-          </button>
-        </div>
-
-        {/* Tablet and desktop: slim search card */}
-        <div className="hidden md:block mt-8">
-          <HeroSearch
-            idPrefix="pk"
-            activeTab={activeTab}
-            onTabChange={handleTabChange}
-            location={location}
-            setLocation={setLocation}
-            secondary={secondary}
-            setSecondary={setSecondary}
-            budget={budget}
-            setBudget={setBudget}
-            onSearch={() => goToListings(activeTab, { resetFilters: false })}
-          />
         </div>
       </section>
 

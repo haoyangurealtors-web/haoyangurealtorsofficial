@@ -124,3 +124,6 @@ This runs on Cloudflare Pages (it needs _worker.js and the AI binding). vercel.j
 - _headers, _redirects, vercel.json: security settings and page addresses
 - index.html, favicon and icons, og-image.jpg, logo files: the page shell and branding
 - package.json, vite.config.js, tailwind.config.js, postcss.config.js: build settings
+
+## Concept restyle
+The home page now uses a rounded hero card with a floating search card, a pill navigation bar that floats over the hero, coloured category cards and a dark rounded footer. Dashboards use a pill top bar, rounded side panel and rounded cards. All styles are in the "Concept skin" block at the end of `index.css`. `hero-scene.svg` is a placeholder picture: replace it (same import in `App.jsx`) with a real property photo when you have one.
