@@ -64,12 +64,10 @@ The browser can only guide people. Anyone can bypass a web page and talk to the 
    - Secure password change: ON.
 2. Supabase > Authentication > Attack Protection:
    - Prevent use of leaked passwords: ON (only offered on the Pro plan; the site already shows a clear message when it is rejected).
-   - CAPTCHA protection: ON, choose Cloudflare Turnstile and paste the Turnstile SECRET key.
-3. Cloudflare: create a Turnstile widget for your domain, then add its SITE key as VITE_TURNSTILE_SITE_KEY in Cloudflare Pages > Environment variables and republish. Until you do, the security check is OFF on the live site. Turn it on in Supabase (step 2) and in Cloudflare together: with only one of the two, sign-up and login will fail.
+   - CAPTCHA protection: OFF (the site no longer shows a security check, so Supabase must not ask for one).
+3. Cloudflare Pages > Environment variables: make sure VITE_TURNSTILE_SITE_KEY is deleted (it is no longer used).
 4. Supabase > Authentication > URL Configuration: set Site URL to your real address and list only your own addresses under Redirect URLs, so confirmation and reset emails can't be pointed anywhere else.
 5. Supabase > Authentication > Rate Limits: leave the defaults on, or make them stricter.
-
-The 3D house in the log-in window (AuthHouse3D.jsx) is plain WebGL, so there is nothing extra to install and it works with the site's security headers. It loads only when someone opens the window, pauses when the window is closed, holds still for people who have reduced motion switched on, and disappears quietly on a device without WebGL.
 
 Every time you push to GitHub, Cloudflare rebuilds and publishes the site in about a minute.
 
@@ -109,7 +107,7 @@ This runs on Cloudflare Pages (it needs _worker.js and the AI binding). vercel.j
 ## What is in this folder
 - App.jsx, AdminOverview.jsx, AdminChart.jsx, main.jsx, index.css: the website (AdminOverview.jsx is the super admin dashboard home)
 - partner.js: the partner shown on the home page (Scorpio Security Services). Its name, logo (scorpio-logo.webp), description and website live there. Anything left empty is simply not shown. PartnerSection.jsx draws it. The website address you put there becomes the "Visit ..." button, which opens in a new tab.
-- authRules.js: the email, name and password rules and the failed-login pause. PasswordMeter.jsx: the strength bar and checklist. AuthHouse3D.jsx: the 3D house in the log-in window
+- authRules.js: the email, name and password rules and the failed-login pause. PasswordMeter.jsx: the strength bar and checklist.
 - supabase-account-wall.sql: the database rule behind the sign-up wall
 - supabase-profile-photos.sql: lets each person save their own profile photo
 - supabase-add-superadmin.sql: makes an email a super admin (and shows the super admin count)

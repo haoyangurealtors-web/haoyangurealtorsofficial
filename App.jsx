@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo, lazy, Suspense } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import LOGO_IMAGE_SRC from "./logo.webp";
 import HERO_SCENE_SRC from "./hero-scene.svg";
 import LOGO_IMAGE_SRC_DARK from "./logo-dark.webp";
@@ -71,8 +71,6 @@ import {
   clearThrottle,
 } from "./authRules.js";
 
-// The 3D house in the log-in window loads separately, only once someone opens that window.
-const AuthHouse3D = lazy(() => import("./AuthHouse3D.jsx"));
 const LOGIN_THROTTLE_KEY = "hy-realtors:login-cooldown";
 const STAFF_THROTTLE_KEY = "hy-realtors:staff-cooldown";
 
@@ -223,11 +221,8 @@ const SITE_CONFIG = {
     url: import.meta.env.VITE_SUPABASE_URL || "",
     anonKey: import.meta.env.VITE_SUPABASE_ANON_KEY || "",
   },
-  // Cloudflare Turnstile site key (public). Empty = no security check on sign-up and login.
-  turnstileSiteKey: import.meta.env.VITE_TURNSTILE_SITE_KEY || "",
 };
 const AUTH_ENABLED = Boolean(SITE_CONFIG.supabase.url && SITE_CONFIG.supabase.anonKey);
-const TURNSTILE_SITE_KEY = SITE_CONFIG.turnstileSiteKey;
 const SESSION_KEY = "hy-realtors:session";
 
 // Superadmin sign-in is verified against salted hashes, so no email or passphrase is readable in this file.
@@ -440,8 +435,6 @@ async function getValidSession() {
   }
 }
 
-const withCaptcha = (body, captchaToken) => (captchaToken ? { ...body, gotrue_meta_security: { captcha_token: captchaToken } } : body);
-
 function jwtAal(token) {
   try {
     const part = String(token).split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
@@ -454,16 +447,16 @@ function jwtAal(token) {
 const verifiedTotpFactors = (user) => ((user && user.factors) || []).filter((f) => f.factor_type === "totp" && f.status === "verified");
 
 const authApi = {
-  async signUp(email, password, name, captchaToken) {
-    const data = await sbRequest("/auth/v1/signup", { method: "POST", body: withCaptcha({ email, password, data: { full_name: name } }, captchaToken) });
+  async signUp(email, password, name) {
+    const data = await sbRequest("/auth/v1/signup", { method: "POST", body: { email, password, data: { full_name: name } } });
     return data && data.access_token ? { session: sessionFromResponse(data) } : { needsConfirmation: true };
   },
-  async signIn(email, password, captchaToken) {
-    const data = await sbRequest("/auth/v1/token?grant_type=password", { method: "POST", body: withCaptcha({ email, password }, captchaToken) });
+  async signIn(email, password) {
+    const data = await sbRequest("/auth/v1/token?grant_type=password", { method: "POST", body: { email, password } });
     return sessionFromResponse(data);
   },
-  recover(email, captchaToken) {
-    return sbRequest("/auth/v1/recover", { method: "POST", body: withCaptcha({ email }, captchaToken) });
+  recover(email) {
+    return sbRequest("/auth/v1/recover", { method: "POST", body: { email } });
   },
   mfaEnroll(token) {
     return sbRequest("/auth/v1/factors", {
@@ -924,7 +917,6 @@ function friendlyAuthError(err, tab) {
   const code = String((err && err.code) || "");
   if (code === "email_not_confirmed") return "Please confirm your email first. Check your inbox for the link.";
   if (err && err.status === 429) return "Too many attempts. Please wait a minute and try again.";
-  if (code === "captcha_failed") return "The security check didn't pass. Please try again.";
   if (code === "mfa_verification_failed" || code === "mfa_challenge_expired" || code === "mfa_verification_rejected") return "That code didn't work. Use the newest code from your authenticator app.";
   if (code === "weak_password") {
     const reasons = (err && err.reasons) || [];
@@ -3729,70 +3721,6 @@ function AdminToastStack({ toasts, onDismiss }) {
   );
 }
 
-let turnstilePromise = null;
-function loadTurnstile() {
-  if (window.turnstile) return Promise.resolve(window.turnstile);
-  if (!turnstilePromise) {
-    turnstilePromise = new Promise((resolve, reject) => {
-      const el = document.createElement("script");
-      el.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
-      el.async = true;
-      el.defer = true;
-      el.onload = () => (window.turnstile ? resolve(window.turnstile) : reject(new Error("Security check missing")));
-      el.onerror = () => {
-        turnstilePromise = null;
-        reject(new Error("Security check failed to load"));
-      };
-      document.head.appendChild(el);
-    });
-  }
-  return turnstilePromise;
-}
-
-// Cloudflare's "are you human" check. Renders nothing unless a Turnstile site key is configured.
-function CaptchaBox({ onToken, resetSignal }) {
-  const holder = useRef(null);
-  const widgetId = useRef(null);
-  useEffect(() => {
-    if (!TURNSTILE_SITE_KEY) return undefined;
-    let cancelled = false;
-    loadTurnstile()
-      .then((turnstile) => {
-        if (cancelled || !holder.current || widgetId.current !== null) return;
-        widgetId.current = turnstile.render(holder.current, {
-          sitekey: TURNSTILE_SITE_KEY,
-          callback: (token) => onToken(token),
-          "expired-callback": () => onToken(""),
-          "error-callback": () => onToken(""),
-        });
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-      if (widgetId.current !== null && window.turnstile) {
-        try {
-          window.turnstile.remove(widgetId.current);
-        } catch (e) {
-          /* ignore */
-        }
-      }
-      widgetId.current = null;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  useEffect(() => {
-    if (widgetId.current !== null && window.turnstile) {
-      try {
-        window.turnstile.reset(widgetId.current);
-      } catch (e) {
-        /* ignore */
-      }
-    }
-  }, [resetSignal]);
-  if (!TURNSTILE_SITE_KEY) return null;
-  return <div ref={holder} style={{ minHeight: 65 }} />;
-}
-
 // Two-step login for staff: an authenticator app makes a new 6-digit code every 30 seconds.
 function MfaSetup({ onDone }) {
   const [step, setStep] = useState("start");
@@ -3905,18 +3833,12 @@ function RemoteStaffGate({ account, staffState, onLogin, onVerifyCode, onMfaDone
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [captchaToken, setCaptchaToken] = useState("");
-  const [captchaReset, setCaptchaReset] = useState(0);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (busy) return;
     if (!password) {
       setError("Enter your password.");
-      return;
-    }
-    if (TURNSTILE_SITE_KEY && !captchaToken) {
-      setError("Please complete the security check.");
       return;
     }
     const wait = throttleSecondsLeft(STAFF_THROTTLE_KEY);
@@ -3927,7 +3849,7 @@ function RemoteStaffGate({ account, staffState, onLogin, onVerifyCode, onMfaDone
     setBusy(true);
     setError("");
     try {
-      await onLogin(email.trim().toLowerCase(), password, captchaToken);
+      await onLogin(email.trim().toLowerCase(), password);
       clearThrottle(STAFF_THROTTLE_KEY);
     } catch (err) {
       if (err && err.status === 400) {
@@ -3940,10 +3862,6 @@ function RemoteStaffGate({ account, staffState, onLogin, onVerifyCode, onMfaDone
       setError(friendlyAuthError(err, "login"));
     } finally {
       setBusy(false);
-      if (TURNSTILE_SITE_KEY) {
-        setCaptchaToken("");
-        setCaptchaReset((n) => n + 1);
-      }
     }
   };
 
@@ -4014,7 +3932,6 @@ function RemoteStaffGate({ account, staffState, onLogin, onVerifyCode, onMfaDone
           Password
           <input type="password" required autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" />
         </label>
-        <CaptchaBox onToken={setCaptchaToken} resetSignal={captchaReset} />
         {error && <p className="pk-admin-error" role="alert">{error}</p>}
         <button type="submit" className="pk-btn-primary justify-center" disabled={busy}>
           {busy ? "Checking…" : "Sign in"}
@@ -6112,7 +6029,6 @@ export default function App() {
   const [authAgree, setAuthAgree] = useState(false);
   const [authIntro, setAuthIntro] = useState("");
   const [emailTouched, setEmailTouched] = useState(false);
-  const [authEverOpened, setAuthEverOpened] = useState(false);
   const [authChecked, setAuthChecked] = useState(!AUTH_ENABLED);
   const gateAutoFor = useRef(null);
   const recoveryTokenRef = useRef(null);
@@ -6121,10 +6037,6 @@ export default function App() {
   const firstPageRender = useRef(true);
   useDialogFocus(authOpen, authDialogRef);
   useDialogFocus(menuOpen, drawerRef);
-  // The 3D house is only fetched the first time the log-in window opens.
-  useEffect(() => {
-    if (authOpen) setAuthEverOpened(true);
-  }, [authOpen]);
   // Live feedback under the password box (sign-up and reset forms only).
   const pwResult = useMemo(
     () => checkPassword(authForm.password, { email: authForm.email, name: authForm.name }),
@@ -6143,8 +6055,6 @@ export default function App() {
   const [staffState, setStaffState] = useState("unknown");
   const [mfaFactorId, setMfaFactorId] = useState("");
   const [mfaTick, setMfaTick] = useState(0);
-  const [captchaToken, setCaptchaToken] = useState("");
-  const [captchaReset, setCaptchaReset] = useState(0);
   const [dataReady, setDataReady] = useState(false);
   const [routerReady, setRouterReady] = useState(false);
   const [syncError, setSyncError] = useState("");
@@ -7235,9 +7145,6 @@ export default function App() {
     if (authTab === "signup" && !authAgree) {
       return failAuth("Please tick the box to agree to the Terms of Use and Privacy Policy.");
     }
-    if (TURNSTILE_SITE_KEY && authTab !== "recovery" && !captchaToken) {
-      return failAuth("Please complete the security check.");
-    }
     if (authTab === "login") {
       const wait = throttleSecondsLeft(LOGIN_THROTTLE_KEY);
       if (wait > 0) return failAuth(`Too many wrong passwords. Please wait ${wait} seconds and try again, or reset your password.`);
@@ -7245,11 +7152,11 @@ export default function App() {
     setAuthBusy(true);
     try {
       if (authTab === "login") {
-        establishSession(await authApi.signIn(email, password, captchaToken));
+        establishSession(await authApi.signIn(email, password));
         clearThrottle(LOGIN_THROTTLE_KEY);
         setAuthOpen(false);
       } else if (authTab === "signup") {
-        const result = await authApi.signUp(email, password, name, captchaToken);
+        const result = await authApi.signUp(email, password, name);
         if (result.session) {
           establishSession(result.session);
           setAuthOpen(false);
@@ -7259,7 +7166,7 @@ export default function App() {
           setAuthNotice(`Almost there! We sent a confirmation link to ${email}. Open it to activate your account, then log in.`);
         }
       } else if (authTab === "forgot") {
-        await authApi.recover(email, captchaToken);
+        await authApi.recover(email);
         setAuthNotice("If an account exists for that email, a reset link is on its way. Check your inbox.");
       } else if (authTab === "recovery") {
         await authApi.updateUser(recoveryTokenRef.current, { password });
@@ -7279,10 +7186,6 @@ export default function App() {
       setAuthError(friendlyAuthError(err, authTab));
     } finally {
       setAuthBusy(false);
-      if (TURNSTILE_SITE_KEY) {
-        setCaptchaToken("");
-        setCaptchaReset((n) => n + 1);
-      }
     }
   };
 
@@ -7405,8 +7308,8 @@ REMOTE ? (
           <RemoteStaffGate
             account={account}
             staffState={staffState}
-            onLogin={async (email, password, captcha) => {
-              establishSession(await authApi.signIn(email, password, captcha));
+            onLogin={async (email, password) => {
+              establishSession(await authApi.signIn(email, password));
             }}
             onVerifyCode={handleMfaCode}
             onMfaDone={handleMfaDone}
@@ -8129,11 +8032,6 @@ import.meta.env.PROD ? (
       {AUTH_ENABLED && (
         <div className={`pk-modal-backdrop ${authOpen ? "pk-open" : ""}`} onClick={closeAuth} inert={authOpen ? undefined : ""}>
           <div className="pk-modal" ref={authDialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="pk-auth-title" onClick={(e) => e.stopPropagation()}>
-            {authEverOpened && (
-              <Suspense fallback={<div className="pk-auth-3d" aria-hidden="true" />}>
-                <AuthHouse3D active={authOpen} />
-              </Suspense>
-            )}
             <div className="flex items-center justify-between mb-5">
               <span id="pk-auth-title" className="pk-display text-lg font-semibold">
                 {authTab === "forgot" ? "Reset your password" : authTab === "recovery" ? "Choose a new password" : `Welcome to ${SITE_CONFIG.name}`}
@@ -8259,7 +8157,6 @@ import.meta.env.PROD ? (
                 onChange={(e) => setAuthForm({ ...authForm, website: e.target.value })}
                 style={{ position: "absolute", left: "-9999px", width: 1, height: 1, opacity: 0 }}
               />
-              {authOpen && authTab !== "recovery" && <CaptchaBox onToken={setCaptchaToken} resetSignal={captchaReset} />}
               {authError && <p className="pk-admin-error" role="alert">{authError}</p>}
               {authNotice && <div className="pk-admin-notice" role="status">{authNotice}</div>}
               <button type="submit" className="pk-btn-primary justify-center" disabled={authBusy}>
