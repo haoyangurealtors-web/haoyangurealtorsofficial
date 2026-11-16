@@ -1768,3 +1768,16 @@
 .pk-spin { animation: pk-spin 0.9s linear infinite; }
 @keyframes pk-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .pk-spin { animation-duration: 3s; } }
+
+/* ---- "We never ask for money" notice (listing pages and footer) ---- */
+.pk-pay-notice {
+  display: flex; gap: 12px; align-items: flex-start; padding: 14px 16px; border-radius: 18px; text-align: left;
+  background: color-mix(in srgb, var(--accent) 16%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 50%, transparent);
+  color: var(--ink);
+}
+.pk-pay-notice > svg { flex: none; margin-top: 2px; color: var(--accent-text); }
+.pk-pay-notice p { margin: 0; font-size: 0.86rem; line-height: 1.55; color: var(--ink-soft); }
+.pk-pay-notice strong { color: var(--ink); font-weight: 700; }
+.pk-pay-notice a { color: var(--accent-text); font-weight: 600; text-decoration: underline; text-underline-offset: 2px; }
+.pk-pay-notice-compact { margin-top: 14px; padding: 11px 13px; border-radius: 14px; }
+.pk-pay-notice-compact p { font-size: 0.78rem; line-height: 1.5; }

@@ -32,7 +32,6 @@ import {
   KeyRound,
   Users,
   UserPlus,
-  ShieldCheck,
   ArrowUpRight,
   LayoutGrid,
   Shield,
@@ -55,6 +54,7 @@ import {
   MessageCircle,
   Clock,
   RefreshCw,
+  ShieldAlert,
 } from "lucide-react";
 import AdminOverview from "./AdminOverview.jsx";
 import PartnerSection from "./PartnerSection.jsx";
@@ -1070,6 +1070,21 @@ function ExpiryBadge({ listing }) {
       <Clock size={11} aria-hidden="true" /> {info.label}
       {info.expired ? " · off the site" : ""}
     </span>
+  );
+}
+
+// A warning shown on every listing page and in the footer: the company never takes money from visitors.
+function PaymentNotice({ compact = false }) {
+  return (
+    <div className={`pk-pay-notice ${compact ? "pk-pay-notice-compact" : ""}`} role="note">
+      <ShieldAlert size={compact ? 18 : 20} aria-hidden="true" />
+      <p>
+        <strong>Please read: {SITE_CONFIG.name} never asks you for money.</strong> We do not collect deposits, booking fees, viewing fees or any other payment from
+        users. Do not pay anyone, for any reason, before you have viewed the property in person and confirmed it is real. If someone asks you to pay first, do not send
+        anything and report it to us at{" "}
+        <a href={`mailto:${SITE_CONFIG.contactEmail}`}>{SITE_CONFIG.contactEmail}</a>.
+      </p>
+    </div>
   );
 }
 
@@ -2386,10 +2401,7 @@ function PropertyDetailPage({
               )}
             </div>
 
-            <p className="pk-ink-soft text-xs mt-3 text-center leading-relaxed">
-              <ShieldCheck size={13} className="inline-block mr-1" style={{ verticalAlign: "-2px" }} />
-              Always view a property in person before making any payment.
-            </p>
+            <PaymentNotice compact />
             <p className="pk-contact-ref pk-mono">Ref {ref}</p>
           </div>
         </aside>
@@ -8118,6 +8130,10 @@ import.meta.env.PROD ? (
                 </li>
               </ul>
             </div>
+          </div>
+
+          <div className="mt-6 md:mt-10">
+            <PaymentNotice />
           </div>
 
           <div className="flex flex-col md:flex-row items-center justify-between gap-3 pt-5 mt-6 md:pt-8 md:mt-10 text-xs pk-ink-soft" style={{ borderTop: "1px solid var(--border)" }}>
