@@ -1781,3 +1781,30 @@
 .pk-pay-notice a { color: var(--accent-text); font-weight: 600; text-decoration: underline; text-underline-offset: 2px; }
 .pk-pay-notice-compact { margin-top: 14px; padding: 11px 13px; border-radius: 14px; }
 .pk-pay-notice-compact p { font-size: 0.78rem; line-height: 1.5; }
+
+/* ---- No-payment pop-up shown after sign-up ---- */
+.pk-notice-dialog { max-width: 440px; padding: 28px 24px 22px; }
+.pk-notice-icon {
+  display: inline-flex; align-items: center; justify-content: center; width: 60px; height: 60px; margin-bottom: 12px; border-radius: 50%;
+  background: color-mix(in srgb, var(--accent) 22%, transparent); color: var(--accent-text);
+}
+.pk-notice-body { margin-top: 12px; text-align: left; }
+.pk-notice-body p { margin: 0 0 10px; font-size: 0.92rem; line-height: 1.6; color: var(--ink-soft); }
+.pk-notice-body strong { color: var(--ink); font-weight: 700; }
+.pk-notice-body a { color: var(--accent-text); font-weight: 600; text-decoration: underline; text-underline-offset: 2px; }
+.pk-understand-btn {
+  display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: 54px; margin-top: 14px; padding: 0 20px;
+  border: 0; border-radius: 999px; cursor: pointer; font-size: 1.05rem; font-weight: 700; letter-spacing: 0.01em;
+  background: var(--accent); color: var(--accent-ink);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 30%, transparent), 0 10px 24px color-mix(in srgb, var(--accent) 45%, transparent);
+  animation: pk-understand-glow 2.4s ease-in-out infinite;
+  transition: transform .2s ease, filter .2s ease;
+}
+.pk-understand-btn:hover { transform: translateY(-2px); filter: brightness(1.06); }
+.pk-understand-btn:active { transform: translateY(0); }
+.pk-understand-btn:focus-visible { outline: 3px solid var(--ink); outline-offset: 3px; }
+@keyframes pk-understand-glow {
+  0%, 100% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 30%, transparent), 0 10px 24px color-mix(in srgb, var(--accent) 45%, transparent); }
+  50% { box-shadow: 0 0 0 9px color-mix(in srgb, var(--accent) 14%, transparent), 0 10px 30px color-mix(in srgb, var(--accent) 60%, transparent); }
+}
+@media (prefers-reduced-motion: reduce) { .pk-understand-btn { animation: none; transition: none; } }

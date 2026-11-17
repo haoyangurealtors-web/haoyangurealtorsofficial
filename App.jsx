@@ -1073,7 +1073,49 @@ function ExpiryBadge({ listing }) {
   );
 }
 
-// A warning shown on every listing page and in the footer: the company never takes money from visitors.
+// The pop-up every member sees once after signing up: the company never takes money from visitors.
+// It can only be closed with the "I understand" button. The answer is remembered on this device, per account.
+const PAY_NOTICE_KEY = (id) => `hy_pay_notice_${id}`;
+function PayNoticeModal({ onUnderstood }) {
+  const dialogRef = useRef(null);
+  useDialogFocus(true, dialogRef);
+  useEffect(() => {
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previous;
+    };
+  }, []);
+  return (
+    <div className="pk-photo-root">
+      <div className="pk-photo-backdrop" />
+      <div ref={dialogRef} className="pk-photo-dialog pk-notice-dialog" role="alertdialog" aria-modal="true" aria-labelledby="pk-notice-title" aria-describedby="pk-notice-body" tabIndex={-1}>
+        <span className="pk-notice-icon" aria-hidden="true">
+          <ShieldAlert size={30} />
+        </span>
+        <h2 id="pk-notice-title" className="pk-display text-xl md:text-2xl font-semibold">
+          Please read before you continue
+        </h2>
+        <div id="pk-notice-body" className="pk-notice-body">
+          <p>
+            <strong>{SITE_CONFIG.name} never asks you for money.</strong> We do not collect deposits, booking fees, viewing fees or any other payment from users.
+          </p>
+          <p>
+            <strong>Do not pay anyone, for any reason, before you have viewed the property in person</strong> and confirmed it is real.
+          </p>
+          <p>
+            If someone asks you to pay first, do not send anything and report it to us at <a href={`mailto:${SITE_CONFIG.contactEmail}`}>{SITE_CONFIG.contactEmail}</a>.
+          </p>
+        </div>
+        <button type="button" className="pk-understand-btn" onClick={onUnderstood}>
+          <Check size={18} aria-hidden="true" /> I understand
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// A warning shown on every listing page: the company never takes money from visitors.
 function PaymentNotice({ compact = false }) {
   return (
     <div className={`pk-pay-notice ${compact ? "pk-pay-notice-compact" : ""}`} role="note">
@@ -2054,12 +2096,12 @@ function ProfilePhotoModal({ account, required, onClose, onSaved, onLogout }) {
       <div className="pk-photo-backdrop" onClick={required || busy ? undefined : onClose} />
       <div ref={dialogRef} className="pk-photo-dialog" role="dialog" aria-modal="true" aria-labelledby="pk-photo-title" tabIndex={-1}>
         <h2 id="pk-photo-title" className="pk-display text-xl md:text-2xl font-semibold">
-          {required ? "Add your profile photo" : "Change your photo"}
+          {account.avatar ? "Change your photo" : "Add your profile photo"}
         </h2>
         <p className="pk-ink-soft text-sm mt-1">
-          {required
-            ? `One last step, ${account.name}. Pick a clear photo of yourself. You can move and zoom it to fit the circle.`
-            : "Pick a new photo, then move and zoom it to fit the circle."}
+          {account.avatar
+            ? "Pick a new photo, then move and zoom it to fit the circle."
+            : "Pick a clear photo of yourself, then move and zoom it to fit the circle."}
         </p>
         <p className="pk-photo-rules">JPG, PNG or WebP · max 5 MB · min 192 × 192 px</p>
 
@@ -4631,6 +4673,33 @@ function AdminListingsPanel({ listings, onUpdateListings, onToast, adminName, op
     }
   };
 
+  // "Renew all expiring": every approved listing that has expired or runs out within the next 7 days gets a fresh 30 days.
+  const EXPIRING_SOON_DAYS = 7;
+  const [confirmRenewAll, setConfirmRenewAll] = useState(false);
+  const [renewingAll, setRenewingAll] = useState(false);
+  const expiringNow = REMOTE
+    ? listings.filter((l) => l.status === "approved" && l.expiresAt && new Date(l.expiresAt).getTime() - Date.now() <= EXPIRING_SOON_DAYS * DAY_MS)
+    : [];
+  const renewAllExpiring = async () => {
+    if (renewingAll) return;
+    setRenewingAll(true);
+    try {
+      const session = await getValidSession();
+      if (!session) throw Object.assign(new Error("Not signed in"), { status: 401 });
+      const count = await sbRequest("/rest/v1/rpc/hy_renew_expiring", { method: "POST", token: session.access_token, body: { p_within_days: EXPIRING_SOON_DAYS } });
+      const newEnd = new Date(Date.now() + LISTING_PERIOD_DAYS * DAY_MS).toISOString();
+      const ids = new Set(expiringNow.map((l) => l.id));
+      onUpdateListings(listings.map((l) => (ids.has(l.id) ? { ...l, expiresAt: newEnd } : l)));
+      const n = Number.isFinite(Number(count)) ? Number(count) : ids.size;
+      onToast?.(`${n} listing${n === 1 ? "" : "s"} renewed for ${LISTING_PERIOD_DAYS} days`, "success");
+    } catch (err) {
+      onToast?.("Couldn't renew the listings. Check that supabase-listing-expiry.sql has been run (the latest version), then try again.", "danger");
+    } finally {
+      setRenewingAll(false);
+      setConfirmRenewAll(false);
+    }
+  };
+
   const setStatus = (id, status) => {
     const listing = listings.find((l) => l.id === id);
     const restart = status === "approved" && listing && listing.status !== "approved" ? { expiresAt: new Date(Date.now() + LISTING_PERIOD_DAYS * 86400000).toISOString() } : {};
@@ -4691,9 +4760,16 @@ function AdminListingsPanel({ listings, onUpdateListings, onToast, adminName, op
             {listings.length} total · listings from agencies and agents land here as "Pending" for your review.
           </p>
         </div>
-        <button className="pk-btn-primary" onClick={() => setShowForm((s) => !s)}>
-          <Plus size={16} /> {showForm ? "Close form" : "Add listing"}
-        </button>
+        <div className="flex items-center gap-2 flex-wrap">
+          {expiringNow.length > 0 && (
+            <button className="pk-btn-outline pk-renew-all" onClick={() => setConfirmRenewAll(true)} disabled={renewingAll}>
+              <RefreshCw size={15} className={renewingAll ? "pk-spin" : ""} /> Renew {expiringNow.length} expiring
+            </button>
+          )}
+          <button className="pk-btn-primary" onClick={() => setShowForm((s) => !s)}>
+            <Plus size={16} /> {showForm ? "Close form" : "Add listing"}
+          </button>
+        </div>
       </div>
 
       {showForm && <ListingForm onSubmit={handleAdd} />}
@@ -4815,6 +4891,15 @@ function AdminListingsPanel({ listings, onUpdateListings, onToast, adminName, op
         confirmLabel="Delete"
         onConfirm={() => confirmDelete && deleteListing(confirmDelete.id)}
         onCancel={() => setConfirmDelete(null)}
+      />
+      <ConfirmDialog
+        open={confirmRenewAll}
+        title={`Renew ${expiringNow.length} listing${expiringNow.length === 1 ? "" : "s"}?`}
+        message={`Every approved listing that has expired or runs out within ${EXPIRING_SOON_DAYS} days gets a fresh ${LISTING_PERIOD_DAYS} days from today. Expired ones go back on the site straight away.`}
+        confirmLabel="Renew all"
+        danger={false}
+        onConfirm={renewAllExpiring}
+        onCancel={() => setConfirmRenewAll(false)}
       />
     </div>
   );
@@ -6195,6 +6280,31 @@ export default function App() {
 
   const [searchSheetOpen, setSearchSheetOpen] = useState(false);
   const [photoModalOpen, setPhotoModalOpen] = useState(false);
+  // Has this member clicked "I understand" on the no-payment pop-up yet? (remembered on this device)
+  const [payAck, setPayAck] = useState({ id: "", done: true });
+  useEffect(() => {
+    if (!account || !account.id) {
+      setPayAck({ id: "", done: true });
+      return;
+    }
+    let done = false;
+    try {
+      done = window.localStorage.getItem(PAY_NOTICE_KEY(account.id)) === "1";
+    } catch (e) {
+      done = false;
+    }
+    setPayAck({ id: account.id, done });
+  }, [account && account.id]);
+  const acknowledgePayNotice = () => {
+    if (account && account.id) {
+      try {
+        window.localStorage.setItem(PAY_NOTICE_KEY(account.id), "1");
+      } catch (e) {
+        /* the pop-up simply shows again next visit */
+      }
+    }
+    setPayAck((prev) => ({ ...prev, done: true }));
+  };
   const heroRef = useRef(null);
   const featuredRef = useRef(null);
   const agentsRef = useRef(null);
@@ -8132,10 +8242,6 @@ import.meta.env.PROD ? (
             </div>
           </div>
 
-          <div className="mt-6 md:mt-10">
-            <PaymentNotice />
-          </div>
-
           <div className="flex flex-col md:flex-row items-center justify-between gap-3 pt-5 mt-6 md:pt-8 md:mt-10 text-xs pk-ink-soft" style={{ borderTop: "1px solid var(--border)" }}>
             <span>© 2026 {SITE_CONFIG.name}. All rights reserved.</span>
             <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2">
@@ -8151,16 +8257,19 @@ import.meta.env.PROD ? (
         </div>
       </footer>
 
-      {/* ---------------- PROFILE PHOTO (required after sign-up) ---------------- */}
-      {AUTH_ENABLED && authChecked && account && ((!account.avatar && !authOpen) || photoModalOpen) && (
+      {/* ---------------- PROFILE PHOTO (optional: only when the member chooses to add or change it) ---------------- */}
+      {AUTH_ENABLED && authChecked && account && photoModalOpen && (
         <ProfilePhotoModal
           account={account}
-          required={!account.avatar}
+          required={false}
           onClose={() => setPhotoModalOpen(false)}
           onSaved={handlePhotoSaved}
           onLogout={currentUser ? handleLogout : handleAccountLogout}
         />
       )}
+
+      {/* ---------------- NO-PAYMENT NOTICE (shown once after sign-up, closed with "I understand") ---------------- */}
+      {AUTH_ENABLED && authChecked && account && !authOpen && !photoModalOpen && payAck.id === account.id && !payAck.done && <PayNoticeModal onUnderstood={acknowledgePayNotice} />}
 
       {/* ---------------- ACCOUNT MODAL ---------------- */}
       {AUTH_ENABLED && (

@@ -17,7 +17,7 @@ You need Node.js 18 or newer (nodejs.org, the LTS version) and Git.
 3. Add the environment variables from .env.example (at least VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY) and NODE_VERSION = 20.
 4. Run supabase-setup.sql once in Supabase (SQL Editor). It needs no editing.
 5. Then run supabase-account-wall.sql once too. It makes listing details (description, amenities, contact) readable only by signed-in users, so the sign-up wall can't be bypassed. Safe to run again.
-6. Run supabase-profile-photos.sql once as well. It lets each signed-in person save their own profile photo (and only their own).
+6. Run supabase-profile-photos.sql once as well. It lets each signed-in person save their own profile photo (and only their own). A profile photo is optional: after sign-up members see the "never pay before viewing" pop-up instead, and add a photo later from their account menu.
 7. Run supabase-agents-and-agencies.sql once too. It lets agents sign in to add and remove their own listings, and lets each agency see and edit every listing its agents post. Safe to run again. Until you run it, the site works as before and agent logins simply don't work yet.
 8. Run supabase-agent-ratings-and-phone.sql once too (after step 7). It adds agent phone numbers (readable only by signed-in visitors) and agent ratings, with the rules for who can see which scores. Safe to run again. Until you run it the site works as before, but phone numbers and ratings can't be saved.
 9. Then run supabase-agent-ratings-visible.sql, which lets signed-in visitors see each agent's average, rating breakdown and written reviews. Safe to run again. Until you run it, visitors can still rate but see no scores.
@@ -89,6 +89,11 @@ What "free" means
 - With the default model, a chat message costs roughly 90 neurons, or roughly 180 when the assistant also searches the listings. That is about 50 to 100 messages a day for the whole site. These are estimates: the real cost depends on how long the chats are.
 - When the daily allowance is used up, the chat shows "Agent Hommie has reached its free limit for now" with the team's email address, and works again after the reset. Nothing else on the site is affected. On a free Cloudflare plan nothing is ever charged. If your Cloudflare account is on the paid Workers plan, usage above the free allowance IS billed (about $0.011 per 1,000 neurons), so set CHAT_DAILY_CAP below if that applies to you.
 - To stretch the allowance, switch to a smaller model with CHAT_AI_MODEL (see below). It gives several times more chats a day but its answers are simpler, it follows Kiswahili less well and it is less reliable at searching, so test it before you keep it.
+- How far the free allowance goes (estimates; Cloudflare gives 10,000 free neurons a day, reset at 00:00 UTC): a chat message costs roughly 130 neurons on the default model when it is a plain answer and roughly 230 when the assistant also looks up listings. That is about 40 to 75 messages a day.
+  - Default model (@cf/meta/llama-3.3-70b-instruct-fp8-fast): about 40 to 75 messages a day.
+  - Smaller model (@cf/meta/llama-3.1-8b-instruct-fp8-fast): about 270 to 470 messages a day, with simpler answers.
+  - Smaller model (@cf/meta/llama-3.2-3b-instruct): similar to the 8B model, with weaker answers.
+  - If you see more than about 50 chat messages a day, switch to the 8B model with CHAT_AI_MODEL and set CHAT_KV with CHAT_DAILY_CAP (about 40 for the default model, about 250 for the 8B model), so the limit is a polite message instead of a surprise. Rates are from Cloudflare's Workers AI pricing page; check it again before relying on the numbers.
 
 Optional settings (Cloudflare variables)
 - CHAT_AI_MODEL: the model to use. The default is @cf/meta/llama-3.3-70b-instruct-fp8-fast (the best answers of the free models, but the most allowance per chat). A cheaper choice to try is @cf/meta/llama-3.1-8b-instruct-fp8-fast. The list of models is in the Cloudflare dashboard under AI > Workers AI > Models; choose one that supports function calling.
@@ -116,6 +121,7 @@ This runs on Cloudflare Pages (it needs _worker.js and the AI binding). vercel.j
 - supabase-agent-ratings-and-phone.sql: agent phone numbers and agent ratings, and who can see them
 - supabase-rental-deposit.sql: deposit columns for rentals, and the rule that every new rental must state its deposit
 - supabase-listing-expiry.sql: the 30-day listing period, its private countdown table, automatic removal of expired listings from the public site, and the superadmin-only renewal
+- supabase-listing-expiry-rollback.sql: undoes the expiry system (Part A shows everything again at once; Part B removes it completely), plus how to make a safe private backup first
 - supabase-usage-by-day.sql: records visitor activity per day (Nakuru time) for the Overview date range
 - supabase-agent-ratings-visible.sql: lets signed-in visitors see agent averages and reviews (first names only)
 - SupportChat.jsx, chatUtils.js: the AI support chat window (its styles are the "pk-chat" block at the end of index.css)

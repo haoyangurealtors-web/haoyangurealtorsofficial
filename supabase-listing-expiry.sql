@@ -137,16 +137,61 @@ revoke all on function public.hy_renew_listing(bigint) from public;
 revoke all on function public.hy_renew_listing(bigint) from anon;
 grant execute on function public.hy_renew_listing(bigint) to authenticated;
 
--- 5. Listings that already exist: give each a fresh 30 days from today. ----------------------------------------
--- (Otherwise every old listing would show as "expired" the moment this runs.)
+-- Renew everything that has expired or runs out within the next p_within_days days (superadmin only).
+-- Used by the "Renew all expiring" button. Returns how many listings were renewed.
+create or replace function public.hy_renew_expiring(p_within_days integer default 7)
+returns integer
+language plpgsql
+security definer
+set search_path = public, auth
+as $$
+declare
+  c record;
+  n integer;
+begin
+  select * into c from public.hy_caller();
+  if c.kind is distinct from 'superadmin' then
+    raise exception 'Only the superadmin can renew listings' using errcode = '42501';
+  end if;
+  update public.listing_expiry e
+     set expires_at = now() + interval '30 days'
+    from public.listings l
+   where l.id = e.listing_id
+     and l.status = 'approved'
+     and e.expires_at <= now() + make_interval(days => greatest(0, least(coalesce(p_within_days, 7), 60)));
+  get diagnostics n = row_count;
+  return n;
+end;
+$$;
+revoke all on function public.hy_renew_expiring(integer) from public;
+revoke all on function public.hy_renew_expiring(integer) from anon;
+grant execute on function public.hy_renew_expiring(integer) to authenticated;
+
+-- 5. Listings that already exist: spread their end dates so they don't all run out on the same day. -------------
+-- Each existing listing gets between 30 and 59 days from today (about one batch a day after the first month),
+-- so you can renew them a few at a time instead of the whole site going quiet on one day.
+-- (Otherwise every old listing would also show as "expired" the moment this runs.)
 insert into public.listing_expiry (listing_id, expires_at)
-select id, now() + interval '30 days' from public.listings
+select id,
+       now() + interval '30 days'
+             + ((row_number() over (order by id) - 1) % 30) * interval '1 day'
+             + (((row_number() over (order by id) - 1) * 7) % 24) * interval '1 hour'
+  from public.listings
 on conflict (listing_id) do nothing;
 
 commit;
 
 -- ---------------------------------------------------------------------------
 -- Handy commands (run one at a time in the SQL Editor)
+--
+-- Already ran an EARLIER version of this file (every old listing got the same end date)? Spread them out now.
+-- Run it once only, and only on listings you have not renewed yet:
+--    with ranked as (
+--      select listing_id, row_number() over (order by listing_id) as n from public.listing_expiry
+--    )
+--    update public.listing_expiry e
+--       set expires_at = now() + interval '30 days' + ((r.n - 1) % 30) * interval '1 day' + (((r.n - 1) * 7) % 24) * interval '1 hour'
+--      from ranked r where r.listing_id = e.listing_id;
 --
 -- Renew one listing from the SQL Editor (replace 123 with the listing number). The site has a Renew button for the superadmin too:
 --    update public.listing_expiry set expires_at = now() + interval '30 days' where listing_id = 123;
